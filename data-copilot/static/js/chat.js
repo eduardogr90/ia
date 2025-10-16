@@ -187,6 +187,17 @@
     sendMessage(text);
   });
 
+  messageInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !submitButton.disabled) {
+      event.preventDefault();
+      if (typeof messageForm.requestSubmit === 'function') {
+        messageForm.requestSubmit();
+      } else {
+        messageForm.dispatchEvent(new Event('submit', { cancelable: true }));
+      }
+    }
+  });
+
   // Initial data ------------------------------------------------------
   if (Array.isArray(INITIAL_CONVERSATIONS)) {
     INITIAL_CONVERSATIONS.forEach((conversation) => {

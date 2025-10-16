@@ -4,70 +4,96 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Data Copilot - Iniciar sesión</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
+      * {
+        box-sizing: border-box;
+      }
       body {
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        background: #0f172a;
-        color: #f8fafc;
+        font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(160deg, #f5f5f5 0%, #e8f6f8 60%, #ffffff 100%);
+        color: #333;
         display: flex;
         justify-content: center;
         align-items: center;
-        height: 100vh;
+        min-height: 100vh;
         margin: 0;
+        padding: 24px;
       }
       .login-container {
-        background: #1e293b;
-        padding: 2.5rem;
-        border-radius: 12px;
+        background: #ffffff;
+        padding: 2.75rem 3rem;
+        border-radius: 24px;
         width: 100%;
-        max-width: 360px;
-        box-shadow: 0 24px 48px rgba(15, 23, 42, 0.45);
+        max-width: 420px;
+        box-shadow: 0 30px 60px rgba(69, 123, 157, 0.15);
+        border: 1px solid rgba(168, 218, 220, 0.4);
       }
       h1 {
         margin-top: 0;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.75rem;
         text-align: center;
         font-weight: 600;
+        color: #264653;
+        letter-spacing: 0.5px;
       }
       label {
         display: block;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.35rem;
         font-size: 0.9rem;
+        color: rgba(38, 70, 83, 0.85);
       }
       input[type="text"],
       input[type="password"] {
         width: 100%;
-        padding: 0.75rem 1rem;
-        border-radius: 8px;
-        border: 1px solid #334155;
-        background: #0f172a;
+        padding: 0.85rem 1rem;
+        border-radius: 14px;
+        border: 1px solid rgba(69, 123, 157, 0.25);
+        background: rgba(255, 255, 255, 0.9);
         color: inherit;
-        margin-bottom: 1rem;
+        margin-bottom: 1.1rem;
+        font-size: 1rem;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      input[type="text"]:focus,
+      input[type="password"]:focus {
+        outline: none;
+        border-color: #457b9d;
+        box-shadow: 0 0 0 4px rgba(168, 218, 220, 0.35);
       }
       button {
         width: 100%;
-        padding: 0.75rem;
+        padding: 0.85rem;
         border: none;
-        border-radius: 8px;
-        background: linear-gradient(135deg, #6366f1, #8b5cf6);
-        color: #f8fafc;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #a8dadc, #457b9d);
+        color: #ffffff;
         font-size: 1rem;
+        font-weight: 600;
         cursor: pointer;
-        transition: transform 0.1s ease, box-shadow 0.2s ease;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+        font-family: inherit;
       }
       button:hover {
         transform: translateY(-1px);
-        box-shadow: 0 12px 24px rgba(99, 102, 241, 0.35);
+        box-shadow: 0 15px 30px rgba(69, 123, 157, 0.25);
+        filter: brightness(1.05);
       }
       .error {
-        background: rgba(248, 113, 113, 0.15);
-        border: 1px solid rgba(248, 113, 113, 0.3);
-        color: #fecaca;
-        padding: 0.75rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
+        background: rgba(231, 111, 81, 0.12);
+        border: 1px solid rgba(231, 111, 81, 0.3);
+        color: #e76f51;
+        padding: 0.85rem;
+        border-radius: 14px;
+        margin-bottom: 1.25rem;
         font-size: 0.9rem;
         text-align: center;
+        box-shadow: 0 8px 18px rgba(231, 111, 81, 0.18);
       }
     </style>
   </head>
