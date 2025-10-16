@@ -104,13 +104,13 @@ def send_message():
         assistant_reply = orchestration.response
     except OrchestrationError as exc:
         assistant_reply = (
-            "No se pudo procesar la solicitud en este momento: "
-            f"{exc}. Por favor verifica la configuración."
+            "Error en la orquestación de agentes: "
+            f"{exc}"
         )
-    except Exception:  # pragma: no cover - defensive safeguard
+    except Exception as exc:  # pragma: no cover - defensive safeguard
         assistant_reply = (
-            "Ocurrió un error inesperado al procesar tu mensaje. "
-            "Inténtalo nuevamente más tarde."
+            "Error inesperado en el servidor: "
+            f"{exc}"
         )
 
     conversation = conversation_service.append_message(
