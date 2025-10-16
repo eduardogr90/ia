@@ -1,143 +1,212 @@
-"""Utilities to initialise the Gemini model via Vertex AI."""
+"""Cliente utilitario para inicializar modelos Gemini de Vertex AI."""
 from __future__ import annotations
 
 import json
 import logging
 import os
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Mapping, MutableMapping
 
-from crewai import LLM
 from google.oauth2 import service_account
-from langchain_google_vertexai import GoogleGenAI
+from langchain_google_vertexai import VertexAI
 
-DEFAULT_VERTEX_LOCATION = "us-central1"
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-lite-001"
 LOGGER = logging.getLogger(__name__)
 
-
-def load_vertex_credentials(path: str = "config/json_key_vertex.json") -> Dict[str, Any]:
-    """Load a service account key stored locally."""
-
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except FileNotFoundError as exc:
-        LOGGER.error("No se encontró el archivo de credenciales de Vertex AI: %s", path)
-        raise
-    except json.JSONDecodeError as exc:  # pragma: no cover - depends on local file
-        LOGGER.error("El archivo de credenciales de Vertex AI está corrupto: %s", path)
-        raise ValueError("Credenciales de Vertex AI inválidas") from exc
+DEFAULT_VERTEX_LOCATION = "us-central1"
+DEFAULT_GEMINI_MODEL = "gemini-1.5-pro"
+DEFAULT_CREDENTIALS_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "json_key_vertex.json"
+)
+VERTEX_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 
 
-class VertexAIGeminiLLM(LLM):
-    """Thin wrapper that exposes a Vertex AI Gemini model as a CrewAI ``LLM``."""
+def _tag_credentials(
+    credentials: service_account.Credentials,
+    info: Mapping[str, Any] | None,
+) -> service_account.Credentials:
+    """Adjunta metadatos útiles al objeto de credenciales."""
 
-    def __init__(
-        self,
-        client: GoogleGenAI,
-        *,
-        model: str,
-        temperature: float,
-        project_id: str,
-        location: str,
-    ) -> None:
-        try:
-            super().__init__(
-                model=model,
-                temperature=temperature,
-                provider="vertex_ai",
-            )
-        except TypeError:
-            # Older CrewAI releases ignore provider/max tokens parameters.
-            super().__init__(model=model, temperature=temperature)
-        self._client = client
-        self.project_id = project_id
-        self.location = location
+    if info is None:
+        return credentials
 
-    # CrewAI agents typically invoke ``llm.call`` or ``llm.invoke`` when available.
-    def invoke(self, prompt: str, **kwargs: Any) -> Any:
-        """Proxy the call to the underlying LangChain Vertex AI client."""
-
-        response = self._client.invoke(prompt, **kwargs)
-        return self._normalise_response(response)
-
-    def call(self, prompt: str, **kwargs: Any) -> Any:  # pragma: no cover - alias for CrewAI
-        """Compatibility alias used by some CrewAI internals."""
-
-        return self.invoke(prompt, **kwargs)
-
-    def __call__(self, prompt: str, **kwargs: Any) -> Any:  # pragma: no cover - alias for LangChain
-        """Allow the wrapper to be used like a plain callable LLM."""
-
-        return self.invoke(prompt, **kwargs)
-
-    @staticmethod
-    def _normalise_response(response: Any) -> Any:
-        if isinstance(response, str):
-            return response
-        text = getattr(response, "text", None)
-        if text:
-            return text
-        if isinstance(response, dict):
-            return response.get("text") or response.get("output") or response
-        return response
-
-    def as_langchain(self) -> GoogleGenAI:
-        """Expose the underlying LangChain client when direct access is required."""
-
-        return self._client
+    raw_copy = dict(info)
+    setattr(credentials, "_ia_raw_info", raw_copy)
+    project_id = raw_copy.get("project_id")
+    if project_id:
+        setattr(credentials, "_ia_project_id", project_id)
+    return credentials
 
 
-def init_gemini_llm(
-    json_key: Dict[str, Any],
-    project_id: str,
-    location: str | None = None,
-    *,
-    model: str | None = None,
-    temperature: float = 0.1,
-    max_output_tokens: int = 2048,
-) -> LLM:
-    """Initialise a Gemini model using Vertex AI and expose it as a CrewAI LLM."""
-
-    if not project_id:
-        raise ValueError("project_id es requerido para inicializar Gemini")
-
-    vertex_location = location or os.getenv("VERTEX_LOCATION", DEFAULT_VERTEX_LOCATION)
-    model_name = model or os.getenv("VERTEX_MODEL", DEFAULT_GEMINI_MODEL)
+def _build_credentials_from_info(info: Mapping[str, Any]) -> service_account.Credentials:
+    """Construye credenciales de servicio a partir de un diccionario JSON."""
 
     try:
         credentials = service_account.Credentials.from_service_account_info(
-            json_key,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            info,
+            scopes=VERTEX_SCOPES,
         )
-    except Exception as exc:  # pragma: no cover - depends on runtime secrets
-        LOGGER.exception("No se pudieron construir las credenciales de Vertex AI")
-        raise RuntimeError("No se pudieron construir las credenciales de Vertex AI") from exc
+    except Exception as exc:  # pragma: no cover - depende de los secretos reales
+        LOGGER.error("No se pudieron construir las credenciales desde el JSON proporcionado")
+        raise ValueError("Credenciales de Vertex AI inválidas") from exc
+    return _tag_credentials(credentials, info)
 
-    vertexai_config = {
-        "project": project_id,
-        "location": vertex_location,
-        "credentials": credentials,
-    }
+
+def _build_credentials_from_file(path: Path) -> service_account.Credentials:
+    """Carga credenciales de servicio desde un archivo JSON."""
 
     try:
-        langchain_client = GoogleGenAI(
-            model=model_name,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            vertexai_config=vertexai_config,
+        with path.open("r", encoding="utf-8") as handle:
+            info = json.load(handle)
+    except FileNotFoundError as exc:
+        LOGGER.error("No se encontró el archivo de credenciales de Vertex AI: %s", path)
+        raise
+    except json.JSONDecodeError as exc:
+        LOGGER.error(
+            "El archivo de credenciales de Vertex AI no contiene un JSON válido: %s",
+            path,
         )
-    except Exception as exc:  # pragma: no cover - depends on runtime env
-        LOGGER.exception("No se pudo inicializar el cliente de Vertex AI Gemini")
-        raise RuntimeError("No se pudo inicializar el cliente de Vertex AI Gemini") from exc
+        raise ValueError("Credenciales de Vertex AI inválidas") from exc
+    except OSError as exc:
+        LOGGER.error("No se pudo leer el archivo de credenciales de Vertex AI: %s", path)
+        raise RuntimeError("No fue posible leer el archivo de credenciales de Vertex AI") from exc
 
-    return VertexAIGeminiLLM(
-        langchain_client,
-        model=model_name,
-        temperature=temperature,
-        project_id=project_id,
-        location=vertex_location,
+    return _build_credentials_from_info(info)
+
+
+def load_vertex_credentials(
+    path_env_var: str = "GOOGLE_APPLICATION_CREDENTIALS",
+    *,
+    credentials_path: str | os.PathLike[str] | None = None,
+    json_credentials: Mapping[str, Any] | None = None,
+    default_path: str | os.PathLike[str] | None = DEFAULT_CREDENTIALS_PATH,
+) -> service_account.Credentials:
+    """Carga las credenciales necesarias para autenticarse contra Vertex AI.
+
+    La prioridad de carga es la siguiente:
+    1. Un diccionario ``json_credentials`` proporcionado explícitamente.
+    2. Un ``credentials_path`` proporcionado explícitamente.
+    3. El valor de la variable de entorno ``path_env_var``. Se acepta tanto la ruta
+       a un archivo JSON como el propio contenido JSON en formato string.
+    4. Un ``default_path`` relativo al proyecto.
+
+    Si ninguna fuente es válida, se lanza ``FileNotFoundError``.
+    """
+
+    if json_credentials is not None:
+        return _build_credentials_from_info(json_credentials)
+
+    if credentials_path is not None:
+        return _build_credentials_from_file(Path(credentials_path).expanduser())
+
+    env_value = os.getenv(path_env_var)
+    if env_value:
+        env_value = env_value.strip()
+        if env_value.startswith("{"):
+            try:
+                info = json.loads(env_value)
+            except json.JSONDecodeError as exc:
+                LOGGER.error(
+                    "La variable de entorno %s no contiene un JSON válido de credenciales.",
+                    path_env_var,
+                )
+                raise ValueError("JSON de credenciales inválido en variable de entorno") from exc
+            return _build_credentials_from_info(info)
+        return _build_credentials_from_file(Path(env_value).expanduser())
+
+    if default_path is not None:
+        default_path = Path(default_path).expanduser()
+        if default_path.exists():
+            return _build_credentials_from_file(default_path)
+
+    message = (
+        "No se encontraron credenciales de Vertex AI. Define la variable de entorno "
+        f"{path_env_var} o coloca el archivo en {DEFAULT_CREDENTIALS_PATH}."
+    )
+    LOGGER.error(message)
+    raise FileNotFoundError(message)
+
+
+def init_gemini_llm(
+    credentials: (
+        service_account.Credentials
+        | Mapping[str, Any]
+        | MutableMapping[str, Any]
+        | None
+    ) = None,
+    *,
+    project_id: str | None = None,
+    location: str | None = None,
+    model_name: str | None = None,
+    temperature: float = 0.2,
+    max_output_tokens: int | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    request_timeout: float | None = None,
+    **extra_vertex_params: Any,
+) -> VertexAI:
+    """Inicializa y devuelve una instancia ``VertexAI`` configurada para Gemini."""
+
+    resolved_location = location or os.getenv("VERTEX_LOCATION", DEFAULT_VERTEX_LOCATION)
+    resolved_model = model_name or os.getenv("VERTEX_MODEL", DEFAULT_GEMINI_MODEL)
+
+    credentials_info: Mapping[str, Any] | None = None
+    if credentials is None:
+        credentials_obj = load_vertex_credentials()
+    elif isinstance(credentials, service_account.Credentials):
+        credentials_obj = credentials
+        credentials_info = getattr(credentials_obj, "_ia_raw_info", None)
+    elif isinstance(credentials, Mapping):
+        credentials_info = credentials
+        credentials_obj = _build_credentials_from_info(credentials)
+    else:
+        raise TypeError(
+            "El parámetro credentials debe ser un objeto Credentials o un diccionario con el JSON del service account."
+        )
+
+    if getattr(credentials_obj, "requires_scopes", False):  # pragma: no cover - depende de versión
+        credentials_obj = credentials_obj.with_scopes(VERTEX_SCOPES)
+
+    project = (
+        project_id
+        or os.getenv("VERTEX_PROJECT_ID")
+        or (credentials_info or {}).get("project_id")
+        or getattr(credentials_obj, "project_id", None)
+        or getattr(credentials_obj, "_ia_project_id", None)
+        or getattr(credentials_obj, "_project_id", None)
     )
 
+    if not project:
+        raise ValueError(
+            "No se pudo determinar el ID de proyecto de Vertex AI. Define VERTEX_PROJECT_ID "
+            "o incluye project_id en el JSON de credenciales."
+        )
 
-__all__ = ["load_vertex_credentials", "init_gemini_llm", "VertexAIGeminiLLM"]
+    client_kwargs: Dict[str, Any] = {
+        "model": resolved_model,
+        "temperature": temperature,
+        "project": project,
+        "location": resolved_location,
+        "credentials": credentials_obj,
+    }
+
+    if max_output_tokens is not None:
+        client_kwargs["max_output_tokens"] = max_output_tokens
+    if top_p is not None:
+        client_kwargs["top_p"] = top_p
+    if top_k is not None:
+        client_kwargs["top_k"] = top_k
+    if request_timeout is not None:
+        client_kwargs["request_timeout"] = request_timeout
+    if extra_vertex_params:
+        client_kwargs.update(extra_vertex_params)
+
+    try:
+        llm = VertexAI(**client_kwargs)
+    except Exception as exc:  # pragma: no cover - depende del entorno de Vertex AI
+        LOGGER.exception("Error al inicializar el modelo Gemini en Vertex AI")
+        raise RuntimeError("No se pudo inicializar el modelo Gemini de Vertex AI") from exc
+
+    return llm
+
+
+__all__ = ["load_vertex_credentials", "init_gemini_llm"]
