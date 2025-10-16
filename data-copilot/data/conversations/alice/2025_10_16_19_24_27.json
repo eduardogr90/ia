@@ -1,0 +1,13 @@
+{
+  "id": "2025_10_16_19_24_27",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hola"
+    },
+    {
+      "role": "assistant",
+      "content": "Ocurrió un error inesperado al procesar tu mensaje. Inténtalo nuevamente más tarde."
+    }
+  ]
+}

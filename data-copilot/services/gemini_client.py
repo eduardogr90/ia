@@ -72,6 +72,7 @@ def _build_credentials_from_file(path: Path) -> service_account.Credentials:
 
     return _build_credentials_from_info(info)
 
+    return _build_credentials_from_info(info)
 
 def load_vertex_credentials(
     path_env_var: str = "GOOGLE_APPLICATION_CREDENTIALS",
