@@ -15,6 +15,7 @@ from flask import (
 )
 
 from config import settings
+from crew.orchestrator import OrchestrationError, OrchestrationResult, get_orchestrator
 from services.auth import auth_service
 from services.conversation_service import conversation_service
 
@@ -96,9 +97,37 @@ def send_message():
     if not conversation:
         return jsonify({"error": "conversation_not_found"}), 404
 
-    assistant_reply = f"Echo: {message}"
-    conversation = conversation_service.append_message(username, conv_id, "assistant", assistant_reply)
-    return jsonify({"assistant_reply": assistant_reply, "conversation": conversation.to_dict()})
+    orchestration: Optional[OrchestrationResult] = None
+    try:
+        orchestrator = get_orchestrator()
+        orchestration = orchestrator.handle_message(message, conversation.messages)
+        assistant_reply = orchestration.response
+    except OrchestrationError as exc:
+        assistant_reply = (
+            "No se pudo procesar la solicitud en este momento: "
+            f"{exc}. Por favor verifica la configuración."
+        )
+    except Exception:  # pragma: no cover - defensive safeguard
+        assistant_reply = (
+            "Ocurrió un error inesperado al procesar tu mensaje. "
+            "Inténtalo nuevamente más tarde."
+        )
+
+    conversation = conversation_service.append_message(
+        username, conv_id, "assistant", assistant_reply
+    )
+    response_payload: Dict[str, object] = {"response": assistant_reply}
+    if conversation:
+        response_payload["conversation"] = conversation.to_dict()
+    if orchestration:
+        response_payload["metadata"] = {
+            "sql": orchestration.sql,
+            "rows": orchestration.rows,
+            "error": orchestration.error,
+            "interpreter": orchestration.interpreter_output,
+            "sql_output": orchestration.sql_output,
+        }
+    return jsonify(response_payload)
 
 
 @app.route("/delete_chat/<conv_id>", methods=["DELETE"])

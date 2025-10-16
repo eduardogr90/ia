@@ -1,2 +1,7 @@
 Flask
 Werkzeug
+crewai
+google-auth
+google-cloud-bigquery
+langchain-google-vertexai
+vertexai
