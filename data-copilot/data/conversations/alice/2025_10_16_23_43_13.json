@@ -1,0 +1,13 @@
+{
+  "id": "2025_10_16_23_43_13",
+  "messages": [
+    {
+      "role": "user",
+      "content": "cuantos proyectos hay?"
+    },
+    {
+      "role": "assistant",
+      "content": "No se pudo inicializar el orquestador de CrewAI.: `BigQueryQueryTool` is not fully defined; you should define `BigQueryClient`, then call `BigQueryQueryTool.model_rebuild()`.\n\nFor further information visit https://errors.pydantic.dev/2.12/u/class-not-fully-defined"
+    }
+  ]
+}
