@@ -1,0 +1,13 @@
+{
+  "id": "2025_10_16_18_49_19",
+  "messages": [
+    {
+      "role": "user",
+      "content": "que hora es?"
+    },
+    {
+      "role": "assistant",
+      "content": "No se pudo procesar la solicitud en este momento: No se encontró el archivo de credenciales de BigQuery en config/bq_service_account.json.. Por favor verifica la configuración."
+    }
+  ]
+}
