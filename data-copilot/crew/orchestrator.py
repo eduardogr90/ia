@@ -18,6 +18,7 @@ from crew.agents import (
     create_sql_generator_agent,
     load_model_metadata,
 )
+from google.auth.exceptions import DefaultCredentialsError
 from services.bigquery_client import BigQueryClient
 from services.gemini_client import init_gemini_llm, load_vertex_credentials
 
@@ -143,6 +144,7 @@ class CrewOrchestrator:
         return "\n".join(lines)
 
     def _run_task(self, agent: Agent, task: Task) -> str:
+        agent_role = getattr(agent, "role", agent.__class__.__name__)
         crew = Crew(
             agents=[agent],
             tasks=[task],
@@ -151,7 +153,15 @@ class CrewOrchestrator:
         try:
             result = crew.kickoff()
         except Exception as exc:  # pragma: no cover - depends on runtime
-            agent_role = getattr(agent, "role", agent.__class__.__name__)
+            if self._contains_default_credentials_error(exc):
+                raise OrchestrationError(
+                    f"El agente {agent_role} falló durante la ejecución",
+                    detail=(
+                        "No se encontraron credenciales predeterminadas de Google Cloud."
+                        " Define GOOGLE_APPLICATION_CREDENTIALS apuntando al JSON del"
+                        " service account o ejecuta `gcloud auth application-default login`."
+                    ),
+                ) from exc
             raise OrchestrationError(
                 f"El agente {agent_role} falló durante la ejecución",
                 detail=str(exc),
@@ -162,6 +172,18 @@ class CrewOrchestrator:
         if isinstance(result, str):
             return result
         return str(result)
+
+    def _contains_default_credentials_error(self, exc: Exception) -> bool:
+        """Walk the exception chain looking for DefaultCredentialsError."""
+
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            if isinstance(current, DefaultCredentialsError):
+                return True
+            seen.add(id(current))
+            current = current.__cause__ or current.__context__
+        return False
 
     def _parse_json(self, payload: str) -> Dict[str, object]:
         try:
