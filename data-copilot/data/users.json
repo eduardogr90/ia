@@ -1,0 +1,8 @@
+{
+  "alice": {
+    "password": "pbkdf2:sha256:260000$3f7beaa75b971822874c685eb5d253d9$2af235c2756786b77458dcb61941c248d7eb2f86918575da15813fdeb79b45b5"
+  },
+  "bob": {
+    "password": "pbkdf2:sha256:260000$c29f7997fda20e6b741c01f4a96a87f7$af6934395a6ad9f569fe3de12f4111c6ed17b0256b68f7f757dd8fbb3cd5c6f3"
+  }
+}
