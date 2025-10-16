@@ -18,8 +18,13 @@ from crew.agents import (
     create_sql_generator_agent,
     load_model_metadata,
 )
+from google.auth.exceptions import DefaultCredentialsError
 from services.bigquery_client import BigQueryClient
-from services.gemini_client import init_gemini_llm, load_vertex_credentials
+from services.gemini_client import (
+    DEFAULT_VERTEX_LOCATION,
+    init_gemini_llm,
+    load_vertex_credentials,
+)
 
 
 class OrchestrationError(RuntimeError):
@@ -68,7 +73,15 @@ class CrewOrchestrator:
         self.metadata = load_model_metadata(self.metadata_dir)
 
         self.history_tool = ConversationHistoryTool()
-        self.metadata_tool = SQLMetadataTool(self.metadata)
+        # ``SQLMetadataTool`` hereda de ``BaseTool`` (y, por extensión, de ``BaseModel``)
+        # por lo que sus argumentos deben pasarse con palabras clave. Usar
+        # ``self.metadata`` como argumento posicional provocaba el error
+        # ``BaseModel.__init__() takes 1 positional argument but 2 were given`` al
+        # inicializar el orquestador. Esto impedía crear los agentes y mostraba el
+        # mensaje "No se pudo inicializar el orquestador de CrewAI". Al proporcionar
+        # el diccionario de metadatos como argumento nombrado, la inicialización se
+        # realiza correctamente con la versión actual de Pydantic/CrewAI.
+        self.metadata_tool = SQLMetadataTool(metadata=self.metadata)
         try:
             self.bigquery_client = bigquery_client or BigQueryClient()
         except FileNotFoundError as exc:  # pragma: no cover - depends on deployment
@@ -94,7 +107,7 @@ class CrewOrchestrator:
     def _ensure_llm(self) -> None:
         if self._llm_ready:
             return
-        location = os.environ.get("VERTEX_LOCATION")
+        location = os.environ.get("VERTEX_LOCATION") or DEFAULT_VERTEX_LOCATION
         try:
             credentials_obj = load_vertex_credentials()
         except FileNotFoundError as exc:  # pragma: no cover - dependent on deployment
@@ -135,6 +148,7 @@ class CrewOrchestrator:
         return "\n".join(lines)
 
     def _run_task(self, agent: Agent, task: Task) -> str:
+        agent_role = getattr(agent, "role", agent.__class__.__name__)
         crew = Crew(
             agents=[agent],
             tasks=[task],
@@ -143,7 +157,15 @@ class CrewOrchestrator:
         try:
             result = crew.kickoff()
         except Exception as exc:  # pragma: no cover - depends on runtime
-            agent_role = getattr(agent, "role", agent.__class__.__name__)
+            if self._contains_default_credentials_error(exc):
+                raise OrchestrationError(
+                    f"El agente {agent_role} falló durante la ejecución",
+                    detail=(
+                        "No se encontraron credenciales predeterminadas de Google Cloud."
+                        " Define GOOGLE_APPLICATION_CREDENTIALS apuntando al JSON del"
+                        " service account o ejecuta `gcloud auth application-default login`."
+                    ),
+                ) from exc
             raise OrchestrationError(
                 f"El agente {agent_role} falló durante la ejecución",
                 detail=str(exc),
@@ -154,6 +176,18 @@ class CrewOrchestrator:
         if isinstance(result, str):
             return result
         return str(result)
+
+    def _contains_default_credentials_error(self, exc: Exception) -> bool:
+        """Walk the exception chain looking for DefaultCredentialsError."""
+
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            if isinstance(current, DefaultCredentialsError):
+                return True
+            seen.add(id(current))
+            current = current.__cause__ or current.__context__
+        return False
 
     def _parse_json(self, payload: str) -> Dict[str, object]:
         try:
