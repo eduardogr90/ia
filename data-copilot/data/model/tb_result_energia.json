@@ -1,0 +1,179 @@
+{
+  "tb_result_energia": {
+    "descripcion": [
+      "Esta tabla registra a nivel de fila cada venta individual de un producto o servicio energético realizada a un cliente o usuario.",
+      "Cada registro corresponde a un producto específico asociado a un script, que representa la agrupación de ventas vinculadas a un mismo proceso comercial o cliente.",
+      "Nivel de granularidad: 1 fila = 1 producto o servicio vendido (unidad de venta).",
+      "Relaciones clave:",
+      " - sc_script_id → Identifica el grupo o script al que pertenece la venta.",
+      " - sl_id → Identificador único de la venta (clave primaria a nivel de fila).",
+      " - sc_crm_code → Referencia cruzada con expediente CRM.",
+      "Consideraciones de negocio:",
+      " - Los campos acc_estado_accom_con_bajas y acc_estado_accom_sin_bajas determinan el estado del contrato dependiendo de si se consideran o no las bajas.",
+      " - Las fechas (acc_fecha_venta, acc_fecha_activacion, acc_fecha_baja, acc_fecha_cancelacion) permiten analizar el ciclo de vida de la venta.",
+      " - El campo acc_origen clasifica la procedencia de la venta según la validación del script y la confirmación del cliente (Script, RCA, Script+RCA)."
+    ],
+    "path": "accom-dw.accom_ventas.tb_result_energia",
+    "columns": {
+      "acc_estado_accom_con_bajas": {
+        "descripcion": "Estado del contrato en ACCOM incluyendo bajas.",
+        "sinonimos": ["estado_con_bajas","estado accom con bajas"],
+        "tipo_dato": "STRING",
+        "reglas_negocio":["Posibles valores: [Neta, Baja, Cancelada, Pendiente]"]
+      },
+      "acc_estado_accom_con_bajas_financiero": {
+        "descripcion": "Estado financiero en ACCOM considerando bajas.",
+        "sinonimos": ["estado_financiero_con_bajas"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores: [Neta, Baja, Cancelada, Pendiente]"]
+      },
+      "acc_estado_accom_sin_bajas": {
+        "descripcion": "Estado del contrato en ACCOM sin considerar bajas.",
+        "sinonimos": ["estado_sin_bajas","estado accom sin bajas"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores: [Neta, Cancelada, Pendiente]"]
+      },
+      "acc_fecha_activacion": {
+        "descripcion": "Fecha de activación del contrato o servicio.",
+        "sinonimos": ["fecha de activacion"],
+        "tipo_dato": "DATETIME",
+        "reglas_negocio": []
+      },
+      "acc_fecha_baja": {
+        "descripcion": "Fecha de baja del contrato o servicio.",
+        "sinonimos": ["fecha_baja","fecha de baja"],
+        "tipo_dato": "DATE",
+        "reglas_negocio": []
+      },
+      "acc_fecha_cancelacion": {
+        "descripcion": "Fecha de cancelación del contrato o servicio.",
+        "sinonimos": ["fecha_cancelacion","fecha de cancelacion"],
+        "tipo_dato": "DATETIME",
+        "reglas_negocio": []
+      },
+      "acc_fecha_venta": {
+        "descripcion": "Fecha de venta registrada en ACCOM.",
+        "sinonimos": ["fecha_venta"],
+        "tipo_dato": "DATETIME",
+        "reglas_negocio": []
+      },
+      "acc_motivo_baja": {
+        "descripcion": "Motivo registrado para la baja del servicio.",
+        "sinonimos": ["motivo_baja"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "acc_motivo_cancelacion": {
+        "descripcion": "Motivo de cancelación del contrato o servicio.",
+        "sinonimos": ["motivo_cancelacion"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "acc_origen": {
+        "descripcion": "Origen comercial de la venta o contrato.",
+        "sinonimos": ["origen", "canal_origen"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["posibles valores: [Script+RCA, Script, RCA]", 
+                           "Script: la venta tiene script pero no ha sido confirmada por cliente",
+                           "RCA: La venta le consta al cliente pero no tenemos script en accom",
+                           "Script+RCA: La venta consta a cliente y tenemos el script"]
+      },
+      "acc_producto_servicio": {
+        "descripcion": "Tipo de producto o servicio comercializado.",
+        "sinonimos": ["producto_servicio"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores: [Gas, Luz, Mantenimiento, null, Otros, Dual]"]
+      },
+      "acc_producto_servicio_detalle": {
+        "descripcion": "Detalle o subcategoría del producto o servicio.",
+        "sinonimos": ["producto_servicio_detalle"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores: [Gas, Luz, Mantenimiento_Hogar, Mantenimiento_Luz, Mantenimiento_Gas, , null, Mantenimiento_Dual, Mantenimiento, Otros, Mantenimiento_Solar, Dual]"]
+      },
+      "acc_proyecto_venta": {
+        "descripcion": "Proyecto comercial al que pertenece la venta.",
+        "sinonimos": ["proyecto_venta"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "mtdt_status_in_crm": {
+        "descripcion": "Estado de la venta en el sistema CRM.",
+        "sinonimos": ["estado_crm"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores: [Cargado,No Cargado]","Si no se dice explicitamente siempre se filtra por Cargado or Null"]
+      },
+      "sc_cc_sale_agent": {
+        "descripcion": "Agente que realiza la venta.",
+        "sinonimos": ["agente_venta", "agente_final"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "sc_cc_sale_date": {
+        "descripcion": "Fecha efectiva de la venta.",
+        "sinonimos": ["fecha_venta"],
+        "tipo_dato": "DATETIME",
+        "reglas_negocio": []
+      },
+      "sc_created_at": {
+        "descripcion": "Fecha y hora de creación del script.",
+        "sinonimos": ["created_at"],
+        "tipo_dato": "DATETIME",
+        "reglas_negocio": []
+      },
+      "sc_crm_code": {
+        "descripcion": "Id Expediente asociado al script o venta.",
+        "sinonimos": ["crm_code", "Id Expediente"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "sc_project": {
+        "descripcion": "Proyectos de energia de los que vendemos sus productos",
+        "sinonimos": ["project", "tenant"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores: [naturgy-sales-alianza","iberdrola-pt","endesa-sales","endesa-pt","total","endesa","naturgy","repsol]"]
+      },
+      "sc_script_id": {
+        "descripcion": "Identificador único del script asociado.",
+        "sinonimos": ["script_id"],
+        "tipo_dato": "INTEGER",
+        "reglas_negocio": []
+      },
+      "sl_ene_billing_frequency": {
+        "descripcion": "Frecuencia de facturación del suministro energético.",
+        "sinonimos": ["frecuencia_facturacion"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores:[Mensual,Bimensual]"]
+      },
+      "sl_ene_billing_type": {
+        "descripcion": "Tipo de facturación del suministro energético.",
+        "sinonimos": ["tipo_facturacion"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "sl_ene_origin_company": {
+        "descripcion": "Compañía de origen del suministro energético.",
+        "sinonimos": ["compania_origen"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "sl_ene_sale_type": {
+        "descripcion": "Tipo de venta de energía (nueva, migración, etc.).",
+        "sinonimos": ["tipo_venta_energia"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": []
+      },
+      "sl_ene_supply_type": {
+        "descripcion": "Tipo de suministro energético (electricidad, gas, etc.).",
+        "sinonimos": ["tipo_suministro"],
+        "tipo_dato": "STRING",
+        "reglas_negocio": ["Posibles valores:[Persona física, Particular, Empresa, Residencial, Negocio]"]
+      },
+      "sl_id": {
+        "descripcion": "Identificador único de la venta en la tabla de sales.",
+        "sinonimos": ["sale_id"],
+        "tipo_dato": "INTEGER",
+        "reglas_negocio": []
+      }
+    }
+  }
+}
