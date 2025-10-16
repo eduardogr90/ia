@@ -1,0 +1,13 @@
+{
+  "id": "2025_10_16_18_58_59",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Cuantos proyectos hay?"
+    },
+    {
+      "role": "assistant",
+      "content": "No se pudo procesar la solicitud en este momento: La variable de entorno VERTEX_PROJECT_ID no está configurada.. Por favor verifica la configuración."
+    }
+  ]
+}
