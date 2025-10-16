@@ -25,6 +25,14 @@ from services.gemini_client import init_gemini_llm, load_vertex_credentials
 class OrchestrationError(RuntimeError):
     """Custom error raised when the Crew orchestration fails."""
 
+    def __init__(self, message: str, *, detail: str | None = None) -> None:
+        full_message = message
+        if detail:
+            detail = detail.strip()
+            if detail:
+                full_message = f"{message}: {detail}"
+        super().__init__(full_message)
+
 
 @dataclass
 class OrchestrationResult:
@@ -65,10 +73,14 @@ class CrewOrchestrator:
             self.bigquery_client = bigquery_client or BigQueryClient()
         except FileNotFoundError as exc:  # pragma: no cover - depends on deployment
             raise OrchestrationError(
-                "No se encontró el archivo de credenciales de BigQuery en config/bq_service_account.json."
+                "No se encontró el archivo de credenciales de BigQuery en config/bq_service_account.json.",
+                detail=str(exc),
             ) from exc
         except Exception as exc:  # pragma: no cover - depends on deployment
-            raise OrchestrationError("No se pudo inicializar el cliente de BigQuery.") from exc
+            raise OrchestrationError(
+                "No se pudo inicializar el cliente de BigQuery.",
+                detail=str(exc),
+            ) from exc
         self.bigquery_tool = BigQueryQueryTool(self.bigquery_client)
 
         self.interpreter_agent: Agent | None = None
@@ -82,25 +94,31 @@ class CrewOrchestrator:
     def _ensure_llm(self) -> None:
         if self._llm_ready:
             return
-        project_id = os.environ.get("VERTEX_PROJECT_ID")
-        if not project_id:
-            raise OrchestrationError(
-                "La variable de entorno VERTEX_PROJECT_ID no está configurada."
-            )
-        location = os.environ.get("VERTEX_LOCATION", "us-central1")
+        location = os.environ.get("VERTEX_LOCATION")
         try:
-            credentials_info = load_vertex_credentials()
+            credentials_obj = load_vertex_credentials()
         except FileNotFoundError as exc:  # pragma: no cover - dependent on deployment
             raise OrchestrationError(
-                "No se encontró el archivo de credenciales de Vertex AI." \
-                " Verifica config/json_key_vertex.json."
+                "No se encontró el archivo de credenciales de Vertex AI."
+                " Verifica data-copilot/config/json_key_vertex.json.",
+                detail=str(exc),
             ) from exc
         try:
             self._llm = init_gemini_llm(
-                credentials_info, project_id=project_id, location=location
+                credentials_obj,
+                location=location,
             )
+        except ValueError as exc:  # pragma: no cover - depends on deployment
+            raise OrchestrationError(
+                "No se pudo determinar el ID de proyecto de Vertex AI."
+                " Define VERTEX_PROJECT_ID o agrega project_id al JSON de credenciales.",
+                detail=str(exc),
+            ) from exc
         except Exception as exc:  # pragma: no cover - depends on environment
-            raise OrchestrationError("No se pudo inicializar el modelo Gemini.") from exc
+            raise OrchestrationError(
+                "No se pudo inicializar el modelo Gemini.",
+                detail=str(exc),
+            ) from exc
         self.interpreter_agent = create_interpreter_agent(
             self.history_tool, llm=self._llm
         )
@@ -122,7 +140,14 @@ class CrewOrchestrator:
             tasks=[task],
             process=Process.sequential,
         )
-        result = crew.kickoff()
+        try:
+            result = crew.kickoff()
+        except Exception as exc:  # pragma: no cover - depends on runtime
+            agent_role = getattr(agent, "role", agent.__class__.__name__)
+            raise OrchestrationError(
+                f"El agente {agent_role} falló durante la ejecución",
+                detail=str(exc),
+            ) from exc
         output = getattr(task, "output", None)
         if isinstance(output, str) and output.strip():
             return output
@@ -209,64 +234,73 @@ class CrewOrchestrator:
     def handle_message(self, user_message: str, history: List[Dict[str, str]]) -> OrchestrationResult:
         self._ensure_llm()
 
-        if not all([self.interpreter_agent, self.sql_agent, self.executor_agent]):
+        try:
+            if not all([self.interpreter_agent, self.sql_agent, self.executor_agent]):
+                raise OrchestrationError(
+                    "Los agentes de CrewAI no se inicializaron correctamente."
+                )
+
+            history_text = self._format_history(history)
+            self.history_tool.set_history(history_text)
+            self.metadata_tool.set_metadata(self.metadata)
+            self.bigquery_tool.reset()
+
+            interpreter_prompt = self._build_interpreter_prompt(user_message, history_text)
+            interpreter_task = Task(
+                description=interpreter_prompt,
+                agent=self.interpreter_agent,
+                expected_output="JSON con requires_sql, reasoning y refined_question",
+            )
+            interpreter_raw = self._run_task(self.interpreter_agent, interpreter_task)
+            interpreter_data = self._parse_json(interpreter_raw)
+
+            requires_sql = bool(interpreter_data.get("requires_sql", False))
+            refined_question = interpreter_data.get("refined_question") or user_message
+
+            sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
+            if requires_sql:
+                metadata_summary = self.metadata_tool.summary()
+                sql_prompt = self._build_sql_prompt(
+                    refined_question, metadata_summary, interpreter_data
+                )
+                sql_task = Task(
+                    description=sql_prompt,
+                    agent=self.sql_agent,
+                    expected_output="JSON con sql y analysis",
+                )
+                sql_raw = self._run_task(self.sql_agent, sql_task)
+                sql_data = self._parse_json(sql_raw)
+
+            sql_text = sql_data.get("sql") if isinstance(sql_data, dict) else None
+            if isinstance(sql_text, str) and not sql_text.strip():
+                sql_text = None
+
+            executor_prompt = self._build_executor_prompt(
+                user_message,
+                sql_text if isinstance(sql_text, str) else None,
+                interpreter_data,
+            )
+            executor_task = Task(
+                description=executor_prompt,
+                agent=self.executor_agent,
+                expected_output="Respuesta final en texto",
+            )
+            final_response = self._run_task(self.executor_agent, executor_task)
+
+            return OrchestrationResult(
+                response=final_response.strip(),
+                interpreter_output=interpreter_data,
+                sql_output=sql_data,
+                sql=sql_text if isinstance(sql_text, str) else None,
+                rows=self.bigquery_tool.last_result,
+                error=self.bigquery_tool.last_error,
+            )
+        except OrchestrationError:
+            raise
+        except Exception as exc:  # pragma: no cover - depends on runtime
             raise OrchestrationError(
-                "Los agentes de CrewAI no se inicializaron correctamente."
-            )
-
-        history_text = self._format_history(history)
-        self.history_tool.set_history(history_text)
-        self.metadata_tool.set_metadata(self.metadata)
-        self.bigquery_tool.reset()
-
-        interpreter_prompt = self._build_interpreter_prompt(user_message, history_text)
-        interpreter_task = Task(
-            description=interpreter_prompt,
-            agent=self.interpreter_agent,
-            expected_output="JSON con requires_sql, reasoning y refined_question",
-        )
-        interpreter_raw = self._run_task(self.interpreter_agent, interpreter_task)
-        interpreter_data = self._parse_json(interpreter_raw)
-
-        requires_sql = bool(interpreter_data.get("requires_sql", False))
-        refined_question = interpreter_data.get("refined_question") or user_message
-
-        sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
-        if requires_sql:
-            metadata_summary = self.metadata_tool.summary()
-            sql_prompt = self._build_sql_prompt(refined_question, metadata_summary, interpreter_data)
-            sql_task = Task(
-                description=sql_prompt,
-                agent=self.sql_agent,
-                expected_output="JSON con sql y analysis",
-            )
-            sql_raw = self._run_task(self.sql_agent, sql_task)
-            sql_data = self._parse_json(sql_raw)
-
-        sql_text = sql_data.get("sql") if isinstance(sql_data, dict) else None
-        if isinstance(sql_text, str) and not sql_text.strip():
-            sql_text = None
-
-        executor_prompt = self._build_executor_prompt(
-            user_message,
-            sql_text if isinstance(sql_text, str) else None,
-            interpreter_data,
-        )
-        executor_task = Task(
-            description=executor_prompt,
-            agent=self.executor_agent,
-            expected_output="Respuesta final en texto",
-        )
-        final_response = self._run_task(self.executor_agent, executor_task)
-
-        return OrchestrationResult(
-            response=final_response.strip(),
-            interpreter_output=interpreter_data,
-            sql_output=sql_data,
-            sql=sql_text if isinstance(sql_text, str) else None,
-            rows=self.bigquery_tool.last_result,
-            error=self.bigquery_tool.last_error,
-        )
+                "Fallo inesperado al procesar el mensaje", detail=str(exc)
+            ) from exc
 
 
 _orchestrator: Optional[CrewOrchestrator] = None
@@ -283,7 +317,8 @@ def get_orchestrator() -> CrewOrchestrator:
             raise
         except Exception as exc:  # pragma: no cover - depends on environment
             raise OrchestrationError(
-                "No se pudo inicializar el orquestador de CrewAI."
+                "No se pudo inicializar el orquestador de CrewAI.",
+                detail=str(exc),
             ) from exc
     return _orchestrator
 
