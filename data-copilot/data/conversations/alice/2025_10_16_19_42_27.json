@@ -1,0 +1,29 @@
+{
+  "id": "2025_10_16_19_42_27",
+  "messages": [
+    {
+      "role": "user",
+      "content": "r"
+    },
+    {
+      "role": "assistant",
+      "content": "Ocurrió un error inesperado al procesar tu mensaje. Inténtalo nuevamente más tarde."
+    },
+    {
+      "role": "user",
+      "content": "r"
+    },
+    {
+      "role": "assistant",
+      "content": "Ocurrió un error inesperado al procesar tu mensaje. Inténtalo nuevamente más tarde."
+    },
+    {
+      "role": "user",
+      "content": "hola"
+    },
+    {
+      "role": "assistant",
+      "content": "Error inesperado en el servidor: 1 validation error for Agent\ntools.0\n  Input should be a valid dictionary or instance of BaseTool [type=model_type, input_value=<crew.agents.Conversation...t at 0x00000183791B7010>, input_type=ConversationHistoryTool]\n    For further information visit https://errors.pydantic.dev/2.12/v/model_type"
+    }
+  ]
+}
