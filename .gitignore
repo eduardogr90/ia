@@ -1,3 +1,6 @@
 # Local credentials (do not commit)
 data-copilot/config/json_key_vertex.json
 data-copilot/config/bq_service_account.json
+# Entorno virtual
+data-copilot/env_ia/
+
