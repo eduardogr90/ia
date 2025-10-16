@@ -82,23 +82,24 @@ class CrewOrchestrator:
     def _ensure_llm(self) -> None:
         if self._llm_ready:
             return
-        project_id = os.environ.get("VERTEX_PROJECT_ID")
-        if not project_id:
-            raise OrchestrationError(
-                "La variable de entorno VERTEX_PROJECT_ID no está configurada."
-            )
-        location = os.environ.get("VERTEX_LOCATION", "us-central1")
+        location = os.environ.get("VERTEX_LOCATION")
         try:
             credentials_info = load_vertex_credentials()
         except FileNotFoundError as exc:  # pragma: no cover - dependent on deployment
             raise OrchestrationError(
                 "No se encontró el archivo de credenciales de Vertex AI." \
-                " Verifica config/json_key_vertex.json."
+                " Verifica data-copilot/config/json_key_vertex.json."
             ) from exc
         try:
             self._llm = init_gemini_llm(
-                credentials_info, project_id=project_id, location=location
+                credentials_info,
+                location=location,
             )
+        except ValueError as exc:  # pragma: no cover - depends on deployment
+            raise OrchestrationError(
+                "No se pudo determinar el ID de proyecto de Vertex AI."
+                " Define VERTEX_PROJECT_ID o agrega project_id al JSON de credenciales."
+            ) from exc
         except Exception as exc:  # pragma: no cover - depends on environment
             raise OrchestrationError("No se pudo inicializar el modelo Gemini.") from exc
         self.interpreter_agent = create_interpreter_agent(

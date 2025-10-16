@@ -14,7 +14,9 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_VERTEX_LOCATION = "us-central1"
 DEFAULT_GEMINI_MODEL = "gemini-1.5-pro"
-DEFAULT_CREDENTIALS_PATH = Path("config/json_key_vertex.json")
+DEFAULT_CREDENTIALS_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "json_key_vertex.json"
+)
 VERTEX_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 
 
@@ -122,21 +124,16 @@ def init_gemini_llm(
 ) -> VertexAI:
     """Inicializa y devuelve una instancia ``VertexAI`` configurada para Gemini."""
 
-    project = project_id or os.getenv("VERTEX_PROJECT_ID")
-    if not project:
-        raise ValueError(
-            "project_id es requerido para inicializar Gemini. Establece VERTEX_PROJECT_ID"
-            " o pásalo como argumento."
-        )
-
     resolved_location = location or os.getenv("VERTEX_LOCATION", DEFAULT_VERTEX_LOCATION)
     resolved_model = model_name or os.getenv("VERTEX_MODEL", DEFAULT_GEMINI_MODEL)
 
+    credentials_info: Mapping[str, Any] | None = None
     if credentials is None:
         credentials_obj = load_vertex_credentials()
     elif isinstance(credentials, service_account.Credentials):
         credentials_obj = credentials
     elif isinstance(credentials, Mapping):
+        credentials_info = credentials
         credentials_obj = _build_credentials_from_info(credentials)
     else:
         raise TypeError(
@@ -145,6 +142,20 @@ def init_gemini_llm(
 
     if getattr(credentials_obj, "requires_scopes", False):  # pragma: no cover - depende de versión
         credentials_obj = credentials_obj.with_scopes(VERTEX_SCOPES)
+
+    project = (
+        project_id
+        or os.getenv("VERTEX_PROJECT_ID")
+        or (credentials_info or {}).get("project_id")
+        or getattr(credentials_obj, "project_id", None)
+        or getattr(credentials_obj, "_project_id", None)
+    )
+
+    if not project:
+        raise ValueError(
+            "No se pudo determinar el ID de proyecto de Vertex AI. Define VERTEX_PROJECT_ID "
+            "o incluye project_id en el JSON de credenciales."
+        )
 
     client_kwargs: Dict[str, Any] = {
         "model": resolved_model,
