@@ -20,6 +20,23 @@ DEFAULT_CREDENTIALS_PATH = (
 VERTEX_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 
 
+def _tag_credentials(
+    credentials: service_account.Credentials,
+    info: Mapping[str, Any] | None,
+) -> service_account.Credentials:
+    """Adjunta metadatos útiles al objeto de credenciales."""
+
+    if info is None:
+        return credentials
+
+    raw_copy = dict(info)
+    setattr(credentials, "_ia_raw_info", raw_copy)
+    project_id = raw_copy.get("project_id")
+    if project_id:
+        setattr(credentials, "_ia_project_id", project_id)
+    return credentials
+
+
 def _build_credentials_from_info(info: Mapping[str, Any]) -> service_account.Credentials:
     """Construye credenciales de servicio a partir de un diccionario JSON."""
 
@@ -31,24 +48,29 @@ def _build_credentials_from_info(info: Mapping[str, Any]) -> service_account.Cre
     except Exception as exc:  # pragma: no cover - depende de los secretos reales
         LOGGER.error("No se pudieron construir las credenciales desde el JSON proporcionado")
         raise ValueError("Credenciales de Vertex AI inválidas") from exc
-    return credentials
+    return _tag_credentials(credentials, info)
 
 
 def _build_credentials_from_file(path: Path) -> service_account.Credentials:
     """Carga credenciales de servicio desde un archivo JSON."""
 
     try:
-        credentials = service_account.Credentials.from_service_account_file(
-            path,
-            scopes=VERTEX_SCOPES,
-        )
+        with path.open("r", encoding="utf-8") as handle:
+            info = json.load(handle)
     except FileNotFoundError as exc:
         LOGGER.error("No se encontró el archivo de credenciales de Vertex AI: %s", path)
         raise
-    except Exception as exc:  # pragma: no cover - depende de archivos corruptos
-        LOGGER.error("El archivo de credenciales de Vertex AI está corrupto: %s", path)
+    except json.JSONDecodeError as exc:
+        LOGGER.error(
+            "El archivo de credenciales de Vertex AI no contiene un JSON válido: %s",
+            path,
+        )
         raise ValueError("Credenciales de Vertex AI inválidas") from exc
-    return credentials
+    except OSError as exc:
+        LOGGER.error("No se pudo leer el archivo de credenciales de Vertex AI: %s", path)
+        raise RuntimeError("No fue posible leer el archivo de credenciales de Vertex AI") from exc
+
+    return _build_credentials_from_info(info)
 
 
 def load_vertex_credentials(
@@ -132,6 +154,7 @@ def init_gemini_llm(
         credentials_obj = load_vertex_credentials()
     elif isinstance(credentials, service_account.Credentials):
         credentials_obj = credentials
+        credentials_info = getattr(credentials_obj, "_ia_raw_info", None)
     elif isinstance(credentials, Mapping):
         credentials_info = credentials
         credentials_obj = _build_credentials_from_info(credentials)
@@ -148,6 +171,7 @@ def init_gemini_llm(
         or os.getenv("VERTEX_PROJECT_ID")
         or (credentials_info or {}).get("project_id")
         or getattr(credentials_obj, "project_id", None)
+        or getattr(credentials_obj, "_ia_project_id", None)
         or getattr(credentials_obj, "_project_id", None)
     )
 

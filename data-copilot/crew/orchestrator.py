@@ -84,7 +84,7 @@ class CrewOrchestrator:
             return
         location = os.environ.get("VERTEX_LOCATION")
         try:
-            credentials_info = load_vertex_credentials()
+            credentials_obj = load_vertex_credentials()
         except FileNotFoundError as exc:  # pragma: no cover - dependent on deployment
             raise OrchestrationError(
                 "No se encontró el archivo de credenciales de Vertex AI." \
@@ -92,7 +92,7 @@ class CrewOrchestrator:
             ) from exc
         try:
             self._llm = init_gemini_llm(
-                credentials_info,
+                credentials_obj,
                 location=location,
             )
         except ValueError as exc:  # pragma: no cover - depends on deployment
