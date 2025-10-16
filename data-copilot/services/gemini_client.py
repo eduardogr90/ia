@@ -5,6 +5,7 @@ import json
 import os
 from typing import Any, Dict
 
+from crewai import Settings
 from google.oauth2 import service_account
 from langchain_google_vertexai import GoogleGenAI
 
@@ -45,6 +46,7 @@ def init_gemini_llm(
         },
     )
 
+    Settings.llm = llm
     return llm
 
 
