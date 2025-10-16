@@ -71,11 +71,12 @@ class CrewOrchestrator:
             raise OrchestrationError("No se pudo inicializar el cliente de BigQuery.") from exc
         self.bigquery_tool = BigQueryQueryTool(self.bigquery_client)
 
-        self.interpreter_agent = create_interpreter_agent(self.history_tool)
-        self.sql_agent = create_sql_generator_agent(self.metadata_tool)
-        self.executor_agent = create_executor_agent(self.bigquery_tool)
+        self.interpreter_agent: Agent | None = None
+        self.sql_agent: Agent | None = None
+        self.executor_agent: Agent | None = None
 
         self._llm_ready = False
+        self._llm = None
 
     # ------------------------------------------------------------------
     def _ensure_llm(self) -> None:
@@ -95,9 +96,16 @@ class CrewOrchestrator:
                 " Verifica config/json_key_vertex.json."
             ) from exc
         try:
-            init_gemini_llm(credentials_info, project_id=project_id, location=location)
+            self._llm = init_gemini_llm(
+                credentials_info, project_id=project_id, location=location
+            )
         except Exception as exc:  # pragma: no cover - depends on environment
             raise OrchestrationError("No se pudo inicializar el modelo Gemini.") from exc
+        self.interpreter_agent = create_interpreter_agent(
+            self.history_tool, llm=self._llm
+        )
+        self.sql_agent = create_sql_generator_agent(self.metadata_tool, llm=self._llm)
+        self.executor_agent = create_executor_agent(self.bigquery_tool, llm=self._llm)
         self._llm_ready = True
 
     def _format_history(self, history: List[Dict[str, str]]) -> str:
@@ -200,6 +208,11 @@ class CrewOrchestrator:
     # ------------------------------------------------------------------
     def handle_message(self, user_message: str, history: List[Dict[str, str]]) -> OrchestrationResult:
         self._ensure_llm()
+
+        if not all([self.interpreter_agent, self.sql_agent, self.executor_agent]):
+            raise OrchestrationError(
+                "Los agentes de CrewAI no se inicializaron correctamente."
+            )
 
         history_text = self._format_history(history)
         self.history_tool.set_history(history_text)

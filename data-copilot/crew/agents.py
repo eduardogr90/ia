@@ -137,7 +137,10 @@ def load_model_metadata(metadata_dir: Path) -> Dict[str, Any]:
     return metadata
 
 
-def create_interpreter_agent(history_tool: ConversationHistoryTool) -> Agent:
+def create_interpreter_agent(
+    history_tool: ConversationHistoryTool,
+    llm: Any | None = None,
+) -> Agent:
     """Create the agent responsible for understanding the user's intent."""
 
     return Agent(
@@ -154,10 +157,14 @@ def create_interpreter_agent(history_tool: ConversationHistoryTool) -> Agent:
         allow_delegation=False,
         verbose=True,
         tools=[history_tool],
+        llm=llm,
     )
 
 
-def create_sql_generator_agent(metadata_tool: SQLMetadataTool) -> Agent:
+def create_sql_generator_agent(
+    metadata_tool: SQLMetadataTool,
+    llm: Any | None = None,
+) -> Agent:
     """Create the agent that converts intents into SQL queries."""
 
     return Agent(
@@ -173,10 +180,14 @@ def create_sql_generator_agent(metadata_tool: SQLMetadataTool) -> Agent:
         allow_delegation=False,
         verbose=True,
         tools=[metadata_tool],
+        llm=llm,
     )
 
 
-def create_executor_agent(query_tool: BigQueryQueryTool) -> Agent:
+def create_executor_agent(
+    query_tool: BigQueryQueryTool,
+    llm: Any | None = None,
+) -> Agent:
     """Create the agent responsible for running SQL statements."""
 
     return Agent(
@@ -193,6 +204,7 @@ def create_executor_agent(query_tool: BigQueryQueryTool) -> Agent:
         allow_delegation=False,
         verbose=True,
         tools=[query_tool],
+        llm=llm,
     )
 
 
