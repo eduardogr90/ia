@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping
 
@@ -51,12 +52,12 @@ def _build_credentials_from_info(info: Mapping[str, Any]) -> service_account.Cre
     return _tag_credentials(credentials, info)
 
 
-def _build_credentials_from_file(path: Path) -> service_account.Credentials:
-    """Carga credenciales de servicio desde un archivo JSON."""
+def _load_credentials_info_from_file(path: Path) -> Mapping[str, Any]:
+    """Lee un archivo JSON y devuelve su contenido como diccionario."""
 
     try:
         with path.open("r", encoding="utf-8") as handle:
-            info = json.load(handle)
+            return json.load(handle)
     except FileNotFoundError as exc:
         LOGGER.error("No se encontró el archivo de credenciales de Vertex AI: %s", path)
         raise
@@ -70,7 +71,35 @@ def _build_credentials_from_file(path: Path) -> service_account.Credentials:
         LOGGER.error("No se pudo leer el archivo de credenciales de Vertex AI: %s", path)
         raise RuntimeError("No fue posible leer el archivo de credenciales de Vertex AI") from exc
 
+
+def _build_credentials_from_file(path: Path) -> service_account.Credentials:
+    """Carga credenciales de servicio desde un archivo JSON."""
+
+    info = _load_credentials_info_from_file(path)
     return _build_credentials_from_info(info)
+
+
+def _ensure_adc_environment(
+    info: Mapping[str, Any],
+    *,
+    path_env_var: str,
+    existing_path: Path | None,
+) -> Path:
+    """Garantiza que exista un archivo utilizable como Application Default Credentials."""
+
+    adc_path = existing_path
+    payload = dict(info)
+    if adc_path is None:
+        temp_dir = Path(tempfile.gettempdir())
+        adc_path = temp_dir / "vertex_application_default_credentials.json"
+        with adc_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+
+    path_str = str(adc_path)
+    os.environ.setdefault(path_env_var, path_str)
+    if path_env_var != "GOOGLE_APPLICATION_CREDENTIALS":
+        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", path_str)
+    return adc_path
 
 
 def load_vertex_credentials(
@@ -92,38 +121,47 @@ def load_vertex_credentials(
     Si ninguna fuente es válida, se lanza ``FileNotFoundError``.
     """
 
+    credentials_info: Mapping[str, Any] | None = None
+    source_path: Path | None = None
+
     if json_credentials is not None:
-        return _build_credentials_from_info(json_credentials)
+        credentials_info = dict(json_credentials)
+    elif credentials_path is not None:
+        source_path = Path(credentials_path).expanduser()
+        credentials_info = _load_credentials_info_from_file(source_path)
+    else:
+        env_value = os.getenv(path_env_var)
+        if env_value:
+            env_value = env_value.strip()
+            if env_value.startswith("{"):
+                try:
+                    credentials_info = json.loads(env_value)
+                except json.JSONDecodeError as exc:
+                    LOGGER.error(
+                        "La variable de entorno %s no contiene un JSON válido de credenciales.",
+                        path_env_var,
+                    )
+                    raise ValueError("JSON de credenciales inválido en variable de entorno") from exc
+            else:
+                source_path = Path(env_value).expanduser()
+                credentials_info = _load_credentials_info_from_file(source_path)
+        if credentials_info is None and default_path is not None:
+            default_path = Path(default_path).expanduser()
+            if default_path.exists():
+                source_path = default_path
+                credentials_info = _load_credentials_info_from_file(default_path)
 
-    if credentials_path is not None:
-        return _build_credentials_from_file(Path(credentials_path).expanduser())
+    if credentials_info is None:
+        message = (
+            "No se encontraron credenciales de Vertex AI. Define la variable de entorno "
+            f"{path_env_var} o coloca el archivo en {DEFAULT_CREDENTIALS_PATH}."
+        )
+        LOGGER.error(message)
+        raise FileNotFoundError(message)
 
-    env_value = os.getenv(path_env_var)
-    if env_value:
-        env_value = env_value.strip()
-        if env_value.startswith("{"):
-            try:
-                info = json.loads(env_value)
-            except json.JSONDecodeError as exc:
-                LOGGER.error(
-                    "La variable de entorno %s no contiene un JSON válido de credenciales.",
-                    path_env_var,
-                )
-                raise ValueError("JSON de credenciales inválido en variable de entorno") from exc
-            return _build_credentials_from_info(info)
-        return _build_credentials_from_file(Path(env_value).expanduser())
+    _ensure_adc_environment(credentials_info, path_env_var=path_env_var, existing_path=source_path)
 
-    if default_path is not None:
-        default_path = Path(default_path).expanduser()
-        if default_path.exists():
-            return _build_credentials_from_file(default_path)
-
-    message = (
-        "No se encontraron credenciales de Vertex AI. Define la variable de entorno "
-        f"{path_env_var} o coloca el archivo en {DEFAULT_CREDENTIALS_PATH}."
-    )
-    LOGGER.error(message)
-    raise FileNotFoundError(message)
+    return _build_credentials_from_info(credentials_info)
 
 
 def init_gemini_llm(

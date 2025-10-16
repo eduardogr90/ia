@@ -225,3 +225,11 @@ __all__ = [
     "create_executor_agent",
     "load_model_metadata",
 ]
+
+
+# ``BigQueryQueryTool`` usa una referencia adelantada a ``BigQueryClient``.
+# Importarlo al final del módulo y reconstruir el modelo le indica a Pydantic
+# cómo resolver esa anotación y evita el error "class not fully defined".
+from services.bigquery_client import BigQueryClient  # noqa: E402  (import tardío)
+
+BigQueryQueryTool.model_rebuild()
