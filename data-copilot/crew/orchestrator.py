@@ -68,7 +68,15 @@ class CrewOrchestrator:
         self.metadata = load_model_metadata(self.metadata_dir)
 
         self.history_tool = ConversationHistoryTool()
-        self.metadata_tool = SQLMetadataTool(self.metadata)
+        # ``SQLMetadataTool`` hereda de ``BaseTool`` (y, por extensión, de ``BaseModel``)
+        # por lo que sus argumentos deben pasarse con palabras clave. Usar
+        # ``self.metadata`` como argumento posicional provocaba el error
+        # ``BaseModel.__init__() takes 1 positional argument but 2 were given`` al
+        # inicializar el orquestador. Esto impedía crear los agentes y mostraba el
+        # mensaje "No se pudo inicializar el orquestador de CrewAI". Al proporcionar
+        # el diccionario de metadatos como argumento nombrado, la inicialización se
+        # realiza correctamente con la versión actual de Pydantic/CrewAI.
+        self.metadata_tool = SQLMetadataTool(metadata=self.metadata)
         try:
             self.bigquery_client = bigquery_client or BigQueryClient()
         except FileNotFoundError as exc:  # pragma: no cover - depends on deployment
