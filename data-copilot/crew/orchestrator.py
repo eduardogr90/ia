@@ -20,7 +20,11 @@ from crew.agents import (
 )
 from google.auth.exceptions import DefaultCredentialsError
 from services.bigquery_client import BigQueryClient
-from services.gemini_client import init_gemini_llm, load_vertex_credentials
+from services.gemini_client import (
+    DEFAULT_VERTEX_LOCATION,
+    init_gemini_llm,
+    load_vertex_credentials,
+)
 
 
 class OrchestrationError(RuntimeError):
@@ -103,7 +107,7 @@ class CrewOrchestrator:
     def _ensure_llm(self) -> None:
         if self._llm_ready:
             return
-        location = os.environ.get("VERTEX_LOCATION")
+        location = os.environ.get("VERTEX_LOCATION") or DEFAULT_VERTEX_LOCATION
         try:
             credentials_obj = load_vertex_credentials()
         except FileNotFoundError as exc:  # pragma: no cover - dependent on deployment

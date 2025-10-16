@@ -14,7 +14,7 @@ from langchain_google_vertexai import VertexAI
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_VERTEX_LOCATION = "us-central1"
-DEFAULT_GEMINI_MODEL = "gemini-1.5-pro"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-lite-001"
 DEFAULT_CREDENTIALS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "json_key_vertex.json"
 )
@@ -252,4 +252,8 @@ def init_gemini_llm(
     return llm
 
 
-__all__ = ["load_vertex_credentials", "init_gemini_llm"]
+__all__ = [
+    "DEFAULT_VERTEX_LOCATION",
+    "load_vertex_credentials",
+    "init_gemini_llm",
+]
