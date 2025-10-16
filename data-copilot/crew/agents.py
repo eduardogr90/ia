@@ -6,40 +6,44 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from crewai import Agent
+from crewai.tools import BaseTool
+from pydantic import Field
 
 
-class ConversationHistoryTool:
+class ConversationHistoryTool(BaseTool):
     """Expose the chat history as a CrewAI tool."""
 
-    name = "conversation_history"
-    description = (
+    name: str = "conversation_history"
+    description: str = (
         "Proporciona el historial completo de la conversación para ayudar a "
         "interpretar la nueva solicitud del usuario."
     )
-
-    def __init__(self, history: str | None = None) -> None:
-        self.history = history or ""
+    history: str = Field(
+        default="",
+        description="Historial completo de mensajes previos en la conversación.",
+    )
 
     def set_history(self, history: str) -> None:
         """Update the cached conversation history."""
 
         self.history = history
 
-    def __call__(self) -> str:
+    def _run(self) -> str:
         return self.history or "(La conversación inicia con este mensaje)"
 
 
-class SQLMetadataTool:
+class SQLMetadataTool(BaseTool):
     """Expose table metadata stored in JSON files as a CrewAI tool."""
 
-    name = "sql_metadata_lookup"
-    description = (
+    name: str = "sql_metadata_lookup"
+    description: str = (
         "Devuelve metadatos del modelo relacional para ayudar a generar SQL. "
         "Permite consultar descripciones de tablas, columnas y relaciones."
     )
-
-    def __init__(self, metadata: Optional[Dict[str, Any]] = None) -> None:
-        self.metadata: Dict[str, Any] = metadata or {}
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadatos disponibles del modelo relacional.",
+    )
 
     def set_metadata(self, metadata: Dict[str, Any]) -> None:
         """Replace the metadata dictionary."""
@@ -71,7 +75,7 @@ class SQLMetadataTool:
             sections.append("\n".join(section))
         return "\n\n".join(sections)
 
-    def __call__(self, table: str | None = None) -> str:
+    def _run(self, table: str | None = None) -> str:
         if not self.metadata:
             return "{}"
         if table and table in self.metadata:
@@ -79,20 +83,24 @@ class SQLMetadataTool:
         return json.dumps(self.metadata, ensure_ascii=False, indent=2)
 
 
-class BigQueryQueryTool:
+class BigQueryQueryTool(BaseTool):
     """Tool wrapper that proxies execution to the ``BigQueryClient``."""
 
-    name = "bigquery_sql_runner"
-    description = (
+    name: str = "bigquery_sql_runner"
+    description: str = (
         "Ejecuta consultas SELECT en BigQuery y devuelve los resultados en formato JSON. "
         "Utiliza este tool con la cadena SQL completa como parámetro."
     )
-
-    def __init__(self, client: "BigQueryClient") -> None:  # pragma: no cover - only type hint
-        self.client = client
-        self.last_result: Optional[list[dict[str, Any]]] = None
-        self.last_error: Optional[str] = None
-        self.last_sql: Optional[str] = None
+    client: "BigQueryClient"
+    last_result: Optional[list[dict[str, Any]]] = Field(
+        default=None, description="Últimos resultados devueltos por BigQuery."
+    )
+    last_error: Optional[str] = Field(
+        default=None, description="Último error registrado al ejecutar SQL."
+    )
+    last_sql: Optional[str] = Field(
+        default=None, description="Última sentencia SQL ejecutada."
+    )
 
     def reset(self) -> None:
         """Reset cached results between runs."""
@@ -101,7 +109,7 @@ class BigQueryQueryTool:
         self.last_error = None
         self.last_sql = None
 
-    def __call__(self, sql: str) -> str:
+    def _run(self, sql: str) -> str:
         self.last_sql = sql
         try:
             rows = self.client.run_query(sql)

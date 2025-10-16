@@ -1,6 +1,7 @@
 """Entry point for the Data Copilot Flask application."""
 from __future__ import annotations
 
+import logging
 from functools import wraps
 from typing import Callable, Dict, Optional
 
@@ -18,6 +19,8 @@ from config import settings
 from crew.orchestrator import OrchestrationError, OrchestrationResult, get_orchestrator
 from services.auth import auth_service
 from services.conversation_service import conversation_service
+
+LOGGER = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY
@@ -103,15 +106,11 @@ def send_message():
         orchestration = orchestrator.handle_message(message, conversation.messages)
         assistant_reply = orchestration.response
     except OrchestrationError as exc:
-        assistant_reply = (
-            "No se pudo procesar la solicitud en este momento: "
-            f"{exc}. Por favor verifica la configuración."
-        )
-    except Exception:  # pragma: no cover - defensive safeguard
-        assistant_reply = (
-            "Ocurrió un error inesperado al procesar tu mensaje. "
-            "Inténtalo nuevamente más tarde."
-        )
+        LOGGER.error("Error durante la orquestación de agentes", exc_info=True)
+        assistant_reply = str(exc)
+    except Exception as exc:  # pragma: no cover - defensive safeguard
+        LOGGER.exception("Excepción no controlada al procesar el mensaje")
+        assistant_reply = f"{exc.__class__.__name__}: {exc}"
 
     conversation = conversation_service.append_message(
         username, conv_id, "assistant", assistant_reply
