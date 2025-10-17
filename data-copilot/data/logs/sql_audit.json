@@ -9,5 +9,97 @@
       "La tabla 'acc_fecha_venta' no está autorizada por el modelo."
     ],
     "warnings": []
+  },
+  {
+    "timestamp": "2025-10-17T09:34:12.101788+00:00",
+    "question": "Generate a table displaying projects and their sales figures for the year 2025, categorized by service.",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    COUNT(*) AS sales_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = 2025\nGROUP BY\n    project,\n    service",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    COUNT(*) AS sales_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = 2025\nGROUP BY\n    project,\n    service LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T09:46:11.218878+00:00",
+    "question": "Provide the trend of cancellations in October, segmented by project.",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta,\n    COUNT(*) AS cancellation_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(MONTH FROM acc_fecha_cancelacion) = 10\n    AND acc_estado_accom_con_bajas = 'Cancelada'\nGROUP BY\n    acc_proyecto_venta\nORDER BY\n    acc_proyecto_venta;",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta,\n    COUNT(*) AS cancellation_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(MONTH FROM acc_fecha_cancelacion) = 10\n    AND acc_estado_accom_con_bajas = 'Cancelada'\nGROUP BY\n    acc_proyecto_venta\nORDER BY\n    acc_proyecto_venta LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se eliminó el punto y coma final de la sentencia.",
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T09:46:47.402148+00:00",
+    "question": "Calculate the percentage of cancellations for each project in October.",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta,\n    COUNT(CASE WHEN EXTRACT(MONTH FROM acc_fecha_cancelacion) = 10 THEN 1 END) AS total_cancellations,\n    COUNT(*) AS total_sales,\n    (COUNT(CASE WHEN EXTRACT(MONTH FROM acc_fecha_cancelacion) = 10 THEN 1 END) * 100.0) / COUNT(*) AS cancellation_percentage\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_estado_accom_con_bajas = 'Cancelada'\n    AND EXTRACT(YEAR FROM acc_fecha_cancelacion) = EXTRACT(YEAR FROM CURRENT_DATE())\nGROUP BY\n    acc_proyecto_venta",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta,\n    COUNT(CASE WHEN EXTRACT(MONTH FROM acc_fecha_cancelacion) = 10 THEN 1 END) AS total_cancellations,\n    COUNT(*) AS total_sales,\n    (COUNT(CASE WHEN EXTRACT(MONTH FROM acc_fecha_cancelacion) = 10 THEN 1 END) * 100.0) / COUNT(*) AS cancellation_percentage\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_estado_accom_con_bajas = 'Cancelada'\n    AND EXTRACT(YEAR FROM acc_fecha_cancelacion) = EXTRACT(YEAR FROM CURRENT_DATE())\nGROUP BY\n    acc_proyecto_venta LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T09:47:57.407689+00:00",
+    "question": "Calculate the weekly percentage of cancellations over total sales for each project.",
+    "submitted_sql": "SELECT\n    EXTRACT(WEEK FROM acc_fecha_venta) AS week,\n    acc_proyecto_venta AS project,\n    COUNT(CASE WHEN acc_estado_accom_con_bajas = 'Cancelada' THEN 1 END) * 100.0 / COUNT(*) AS cancellation_percentage\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_fecha_venta IS NOT NULL\nGROUP BY\n    week,\n    project\nORDER BY\n    week,\n    project;",
+    "sanitized_sql": "SELECT\n    EXTRACT(WEEK FROM acc_fecha_venta) AS week,\n    acc_proyecto_venta AS project,\n    COUNT(CASE WHEN acc_estado_accom_con_bajas = 'Cancelada' THEN 1 END) * 100.0 / COUNT(*) AS cancellation_percentage\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_fecha_venta IS NOT NULL\nGROUP BY\n    week,\n    project\nORDER BY\n    week,\n    project LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se eliminó el punto y coma final de la sentencia.",
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T11:37:39.404323+00:00",
+    "question": "Generate a SQL query to retrieve the number of sales per week and project for the current month, along with the percentage change in sales compared to the previous week.",
+    "submitted_sql": "SELECT\n    FORMAT_DATE('%Y-%W', acc_fecha_venta) AS week,\n    acc_proyecto_venta AS project,\n    COUNT(*) AS sales,\n    (COUNT(*) - LAG(COUNT(*), 1, 0) OVER (PARTITION BY acc_proyecto_venta ORDER BY FORMAT_DATE('%Y-%W', acc_fecha_venta))) * 100.0 / LAG(COUNT(*), 1, 0) OVER (PARTITION BY acc_proyecto_venta ORDER BY FORMAT_DATE('%Y-%W', acc_fecha_venta)) AS percentage_change\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    1, 2\nORDER BY\n    week, project;",
+    "sanitized_sql": "SELECT\n    FORMAT_DATE('%Y-%W', acc_fecha_venta) AS week,\n    acc_proyecto_venta AS project,\n    COUNT(*) AS sales,\n    (COUNT(*) - LAG(COUNT(*), 1, 0) OVER (PARTITION BY acc_proyecto_venta ORDER BY FORMAT_DATE('%Y-%W', acc_fecha_venta))) * 100.0 / LAG(COUNT(*), 1, 0) OVER (PARTITION BY acc_proyecto_venta ORDER BY FORMAT_DATE('%Y-%W', acc_fecha_venta)) AS percentage_change\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    1, 2\nORDER BY\n    week, project LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se eliminó el punto y coma final de la sentencia.",
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T11:39:05.488901+00:00",
+    "question": "Retrieve the sales figures for Naturgy, broken down by week, for the current year.",
+    "submitted_sql": "SELECT EXTRACT(WEEK FROM sc_cc_sale_date) AS week_number, COUNT(*) AS sales_count\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE sc_project = 'naturgy'\nAND EXTRACT(YEAR FROM sc_cc_sale_date) = EXTRACT(YEAR FROM CURRENT_DATE())\nGROUP BY week_number\nORDER BY week_number;",
+    "sanitized_sql": "SELECT EXTRACT(WEEK FROM sc_cc_sale_date) AS week_number, COUNT(*) AS sales_count\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE sc_project = 'naturgy'\nAND EXTRACT(YEAR FROM sc_cc_sale_date) = EXTRACT(YEAR FROM CURRENT_DATE())\nGROUP BY week_number\nORDER BY week_number LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se eliminó el punto y coma final de la sentencia.",
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T11:44:20.983472+00:00",
+    "question": "What percentage of maintenance activities are performed on primary products?",
+    "submitted_sql": "SELECT\n    SUM(CASE WHEN acc_producto_servicio = 'Mantenimiento' THEN 1 ELSE 0 END) * 100.0 / COUNT(acc_producto_servicio) AS percentage_maintenance\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_producto_servicio IN ('Gas', 'Luz', 'Dual')",
+    "sanitized_sql": "SELECT\n    SUM(CASE WHEN acc_producto_servicio = 'Mantenimiento' THEN 1 ELSE 0 END) * 100.0 / COUNT(acc_producto_servicio) AS percentage_maintenance\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_producto_servicio IN ('Gas', 'Luz', 'Dual') LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T11:47:55.414388+00:00",
+    "question": "What is the total number of sales for 'naturgy (luces)' this month?",
+    "submitted_sql": "SELECT COUNT(*) AS total_sales\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE sc_project = 'naturgy'\nAND acc_producto_servicio = 'Luz'\nAND EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\nAND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())",
+    "sanitized_sql": "SELECT COUNT(*) AS total_sales\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE sc_project = 'naturgy'\nAND acc_producto_servicio = 'Luz'\nAND EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\nAND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE()) LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
   }
 ]
