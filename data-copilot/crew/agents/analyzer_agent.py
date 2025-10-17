@@ -14,7 +14,8 @@ class GeminiAnalysisTool(BaseTool):
 
     name: str = "gemini_result_analyzer"
     description: str = (
-        "Genera un análisis narrativo en español a partir de los resultados devueltos por BigQuery."
+        "Genera un análisis narrativo en español a partir de los resultados devueltos por BigQuery,"
+        " priorizando una respuesta directa y sin proponer visualizaciones salvo solicitud explícita."
     )
     client: "GeminiClient"
     question: str = Field(default="")
@@ -51,12 +52,13 @@ def create_analyzer_agent(
         role="AnalyzerAgent",
         goal=(
             "Interpretar los resultados numéricos provenientes de BigQuery y "
-            "comunicar hallazgos en español en un lenguaje ejecutivo."
+            "comunicar hallazgos en español en un lenguaje ejecutivo, empezando por la respuesta"
+            " puntual solicitada y aportando contexto mínimo adicional."
         ),
         backstory=(
-            "Eres un analista de inteligencia de negocio que sintetiza datos en "
-            "historias claras para la dirección. Utiliza el tool de análisis para "
-            "generar texto y sugerencias visuales."
+            "Eres un analista de inteligencia de negocio que sintetiza datos en historias claras"
+            " para la dirección. Priorizas contestar la métrica central antes de agregar contexto"
+            " y solo mencionas visualizaciones cuando el usuario lo pide explícitamente."
         ),
         allow_delegation=False,
         verbose=True,

@@ -166,9 +166,7 @@ class CrewOrchestrator:
                 "No se pudo inicializar el modelo Gemini.",
                 detail=str(exc),
             ) from exc
-        self.interpreter_agent = create_interpreter_agent(
-            self.history_tool, llm=self._llm
-        )
+        self.interpreter_agent = create_interpreter_agent(llm=self._llm)
         self.sql_agent = create_sql_generator_agent(self.metadata_tool, llm=self._llm)
         self.executor_agent = create_executor_agent(self.bigquery_tool, llm=self._llm)
         self.validator_agent = create_validator_agent(
@@ -311,35 +309,129 @@ class CrewOrchestrator:
                     return {"raw": payload.strip()}
             return {"raw": payload.strip()}
 
-    def _build_interpreter_prompt(self, user_message: str, history_text: str) -> str:
-        return (
-            "Analiza la intención del usuario y determina si requiere una consulta SQL, usando el historial de conversación."
-            "Historial:\n"
-            f"{history_text or '(sin historial previo)'}\n\n"
-            f"Mensaje actual: {user_message}\n\n"
-            "Responde exclusivamente en JSON con las claves: \n"
-            "- requires_sql: true o false\n"
-            "- reasoning: explicación corta\n"
-            "- refined_question: reformulación clara de la solicitud\n"
+    def _coerce_bool(self, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized in {"true", "1", "si", "sí", "yes"}
+        if isinstance(value, (int, float)):
+            return value != 0
+        return False
+
+    def _extract_semantics(self, interpreter_data: Dict[str, object]) -> Dict[str, object]:
+        semantics: Dict[str, object] = {}
+        raw_semantics = interpreter_data.get("semantics")
+        if isinstance(raw_semantics, dict):
+            semantics.update(raw_semantics)
+
+        for key in (
+            "is_comparative",
+            "aggregated_period",
+            "aggregated_label",
+            "breakdown_unit",
+            "wants_visual",
+        ):
+            if key not in semantics and key in interpreter_data:
+                semantics[key] = interpreter_data[key]
+
+        semantics["is_comparative"] = self._coerce_bool(
+            semantics.get("is_comparative")
         )
+        semantics["wants_visual"] = self._coerce_bool(semantics.get("wants_visual"))
+        semantics["aggregated_period"] = (
+            semantics.get("aggregated_period") if isinstance(semantics.get("aggregated_period"), str) else None
+        )
+        semantics["aggregated_label"] = (
+            semantics.get("aggregated_label") if isinstance(semantics.get("aggregated_label"), str) else None
+        )
+        semantics["breakdown_unit"] = (
+            semantics.get("breakdown_unit") if isinstance(semantics.get("breakdown_unit"), str) else None
+        )
+
+        return semantics
+
+    def _build_interpreter_prompt(
+        self, user_message: str, history_text: str, has_history: bool
+    ) -> str:
+        base = [
+            "Analiza la intención del usuario y determina si requiere una consulta SQL.",
+        ]
+        if has_history:
+            base.append(
+                "Utiliza el historial proporcionado solo cuando aporte contexto relevante y no hagas suposiciones ajenas a él."
+            )
+            base.append("Historial:")
+            base.append(history_text)
+        else:
+            base.append(
+                "Trabaja únicamente con el mensaje actual; no menciones ni supongas mensajes anteriores."
+            )
+        base.append("")
+        base.append(f"Mensaje actual: {user_message}")
+        base.append("")
+        base.append("Responde exclusivamente en JSON con las claves:")
+        base.append("- requires_sql: true o false")
+        base.append("- reasoning: explicación corta")
+        base.append("- refined_question: reformulación clara de la solicitud")
+        base.append(
+            "- semantics: objeto con is_comparative (bool), wants_visual (bool), aggregated_period (string o null), aggregated_label (string o null) y breakdown_unit (string o null)"
+        )
+        return "\n".join(base)
 
     def _build_sql_prompt(
         self,
         refined_question: str,
         metadata_summary: str,
         interpreter_data: Dict[str, object],
+        semantics: Dict[str, object],
     ) -> str:
-        return (
-            "Genera una consulta SQL siguiendo el BigQuery Standard SQL. que responda la pregunta."\
-            " Utiliza solo tablas y columnas disponibles en los metadatos.\n\n"
-            f"Pregunta refinada: {refined_question}\n"
-            f"Contexto adicional: {interpreter_data.get('reasoning', '')}\n\n"
-            "Metadatos disponibles:\n"
-            f"{metadata_summary}\n\n"
-            "Responde en JSON con las claves:\n"
-            "- sql: cadena con la consulta o null si no es necesaria\n"
-            "- analysis: explicación breve de la estrategia\n"
+        base = [
+            "Genera una consulta SQL siguiendo el BigQuery Standard SQL que responda la pregunta.",
+            "Utiliza solo tablas y columnas disponibles en los metadatos y respeta todos los filtros implícitos en la solicitud.",
+            f"Pregunta refinada: {refined_question}",
+            f"Contexto adicional: {interpreter_data.get('reasoning', '')}",
+            "",
+            "Metadatos disponibles:",
+            metadata_summary,
+            "",
+        ]
+
+        is_comparative = self._coerce_bool(semantics.get("is_comparative"))
+        aggregated_period = semantics.get("aggregated_period") if isinstance(semantics.get("aggregated_period"), str) else None
+        aggregated_label = semantics.get("aggregated_label") if isinstance(semantics.get("aggregated_label"), str) else None
+        breakdown_unit = semantics.get("breakdown_unit") if isinstance(semantics.get("breakdown_unit"), str) else None
+
+        if is_comparative:
+            base.append(
+                "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario y no añadas desgloses adicionales."
+            )
+        elif aggregated_period:
+            period_label = aggregated_label or "solicitado"
+            breakdown_unit_label = breakdown_unit or "más pequeño"
+            base.append(
+                "La solicitud pide un agregado "
+                f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit_label} "
+                "del mismo periodo solo con fines analíticos."
+            )
+            base.append(
+                "Puedes usar CTEs, UNION ALL o GROUPING SETS para entregar ambos niveles en un mismo resultado, identificando cada fila con una columna que indique el nivel de agregación (por ejemplo, nivel_agregacion)."
+            )
+            base.append(
+                "No alteres la métrica original ni cambies los filtros solicitados. Si el desglose adicional no es viable con los metadatos disponibles, indícalo con claridad en analysis."
+            )
+        else:
+            base.append(
+                "Respeta la granularidad mencionada por el usuario y evita añadir niveles temporales no pedidos."
+            )
+
+        base.append("")
+        base.append("Responde en JSON con las claves:")
+        base.append("- sql: cadena con la consulta o null si no es necesaria")
+        base.append(
+            "- analysis: explicación breve de la estrategia e indica cualquier decisión sobre granularidad"
         )
+        return "\n".join(base)
 
     def _build_executor_prompt(
         self,
@@ -389,24 +481,53 @@ class CrewOrchestrator:
         refined_question: str,
         sql: str | None,
         rows: List[Dict[str, object]] | None,
+        semantics: Dict[str, object],
     ) -> str:
         base = [
-            "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta."
-            "Si solo hay uno o pocos valores, responde de forma breve y directa."
-            "Sé preciso, conciso y basado únicamente en los resultados mostrados"
-            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo",
-            f"Pregunta a resolver: {refined_question}",
+            "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
+            "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
+            "Si solo hay un valor disponible, limita la respuesta a una frase directa y concreta.",
+            "Sé preciso, conciso y basa tus conclusiones únicamente en los resultados mostrados.",
+            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo.",
         ]
+        is_comparative = self._coerce_bool(semantics.get("is_comparative"))
+        aggregated_period = semantics.get("aggregated_period") if isinstance(semantics.get("aggregated_period"), str) else None
+        aggregated_label = semantics.get("aggregated_label") if isinstance(semantics.get("aggregated_label"), str) else None
+        breakdown_unit = semantics.get("breakdown_unit") if isinstance(semantics.get("breakdown_unit"), str) else None
+        wants_visual = self._coerce_bool(semantics.get("wants_visual"))
+
+        if is_comparative:
+            base.append(
+                "La solicitud es comparativa o evolutiva; responde siguiendo esa estructura y evita agregar desgloses extra."
+            )
+        elif aggregated_period:
+            period_label = aggregated_label or "principal"
+            breakdown_unit_label = breakdown_unit or "secundario"
+            base.append(
+                "Presenta el total "
+                f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit_label}."
+            )
+        base.append(
+            "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
+        )
+        if wants_visual:
+            base.append(
+                "El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
+            )
+        else:
+            base.append(
+                "El usuario no pidió gráficos; mantén chart en null y no propongas visualizaciones."
+            )
         if sql:
             base.append("Consulta SQL ejecutada:")
             base.append(f"```sql\n{sql}\n```")
         base.append(
-            f"Cantidad de filas disponibles: {len(rows) if rows else 0}."
-            " Usa el tool para obtener la respuesta final."
+            f"Cantidad de filas disponibles: {len(rows) if rows else 0}. Usa el tool para obtener la respuesta final."
         )
         base.append(
             "El resultado final debe ser JSON con las claves text y chart (esta última puede ser null)."
         )
+        base.append(f"Pregunta a resolver: {refined_question}")
         return "\n\n".join(base)
 
     # ------------------------------------------------------------------
@@ -487,17 +608,33 @@ class CrewOrchestrator:
                     "Los agentes de CrewAI no se inicializaron correctamente."
                 )
 
-            history_text = self._format_history(history)
-            self.history_tool.set_history(history_text)
+            has_history = any(
+                (item.get("content") or "").strip()
+                for item in history
+                if isinstance(item, dict)
+            )
+            history_text = self._format_history(history) if has_history else ""
+            if has_history:
+                self.history_tool.set_history(history_text)
+                self.interpreter_agent = create_interpreter_agent(
+                    history_tool=self.history_tool, llm=self._llm
+                )
+            else:
+                self.history_tool.set_history("")
+                self.interpreter_agent = create_interpreter_agent(llm=self._llm)
             self.metadata_tool.set_metadata(self.metadata)
             self.bigquery_tool.reset()
             self.validation_tool.set_metadata(self.metadata)
 
-            interpreter_prompt = self._build_interpreter_prompt(user_message, history_text)
+            interpreter_prompt = self._build_interpreter_prompt(
+                user_message, history_text, has_history
+            )
             interpreter_task = Task(
                 description=interpreter_prompt,
                 agent=self.interpreter_agent,
-                expected_output="JSON con requires_sql, reasoning y refined_question",
+                expected_output=(
+                    "JSON con requires_sql, reasoning, refined_question y semantics"
+                ),
             )
             interpreter_raw, interpreter_trace = self._run_task(
                 self.interpreter_agent,
@@ -510,13 +647,18 @@ class CrewOrchestrator:
             requires_sql = bool(interpreter_data.get("requires_sql", False))
             refined_question = interpreter_data.get("refined_question") or user_message
 
+            question_semantics = self._extract_semantics(interpreter_data)
+
             sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
             validation_data: Dict[str, object] = {}
             analyzer_output: Dict[str, object] = {}
             if requires_sql:
                 metadata_summary = self.metadata_tool.summary()
                 sql_prompt = self._build_sql_prompt(
-                    refined_question, metadata_summary, interpreter_data
+                    refined_question,
+                    metadata_summary,
+                    interpreter_data,
+                    question_semantics,
                 )
                 sql_task = Task(
                     description=sql_prompt,
@@ -643,6 +785,7 @@ class CrewOrchestrator:
                     refined_question,
                     sanitized_sql,
                     rows or [],
+                    question_semantics,
                 )
                 analyzer_task = Task(
                     description=analyzer_prompt,
