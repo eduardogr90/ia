@@ -29,5 +29,29 @@
     "warnings": [
       "Se aplicó automáticamente LIMIT 1000."
     ]
+  },
+  {
+    "timestamp": "2025-10-17T22:37:47.150926+00:00",
+    "question": "What is the total number of sales per project this month?",
+    "submitted_sql": "SELECT\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    SUM(1) AS total_sales,\n    CASE\n        WHEN acc_proyecto_venta IS NULL THEN 'Total'\n        ELSE 'Project'\n    END AS aggregation_level\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    GROUPING SETS ((acc_proyecto_venta), ())\nORDER BY\n    aggregation_level DESC, project;",
+    "sanitized_sql": "SELECT\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    SUM(1) AS total_sales,\n    CASE\n        WHEN acc_proyecto_venta IS NULL THEN 'Total'\n        ELSE 'Project'\n    END AS aggregation_level\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    GROUPING SETS ((acc_proyecto_venta), ())\nORDER BY\n    aggregation_level DESC, project LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se eliminó el punto y coma final de la sentencia.",
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T22:39:01.988353+00:00",
+    "question": "Generate a matrix showing sales figures, broken down by service and project.",
+    "submitted_sql": "SELECT\n    COALESCE(acc_producto_servicio, 'Total') AS service,\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    COUNT(*) AS sales_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nGROUP BY\n    GROUPING SETS ((acc_producto_servicio, acc_proyecto_venta), (acc_producto_servicio), (acc_proyecto_venta), ())\nORDER BY\n    service, project;",
+    "sanitized_sql": "SELECT\n    COALESCE(acc_producto_servicio, 'Total') AS service,\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    COUNT(*) AS sales_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nGROUP BY\n    GROUPING SETS ((acc_producto_servicio, acc_proyecto_venta), (acc_producto_servicio), (acc_proyecto_venta), ())\nORDER BY\n    service, project LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se eliminó el punto y coma final de la sentencia.",
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
   }
 ]
