@@ -9,7 +9,7 @@ from .tools.conversation_history import ConversationHistoryTool
 
 
 def create_interpreter_agent(
-    history_tool: ConversationHistoryTool,
+    history_tool: ConversationHistoryTool | None = None,
     llm: Any | None = None,
 ) -> Agent:
     """Create the agent responsible for understanding the user's intent."""
@@ -27,7 +27,7 @@ def create_interpreter_agent(
         ),
         allow_delegation=False,
         verbose=True,
-        tools=[history_tool],
+        tools=[history_tool] if history_tool else [],
         llm=llm,
     )
 
