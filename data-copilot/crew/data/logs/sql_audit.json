@@ -1,0 +1,33 @@
+[
+  {
+    "timestamp": "2025-10-17T21:06:58.255692+00:00",
+    "question": "Which project sold the most lights this month?",
+    "submitted_sql": "SELECT acc_proyecto_venta, COUNT(*) AS total_lights_sold\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_producto_servicio = 'Luz'\nAND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nAND EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\nGROUP BY acc_proyecto_venta\nORDER BY total_lights_sold DESC\nLIMIT 1",
+    "sanitized_sql": "SELECT acc_proyecto_venta, COUNT(*) AS total_lights_sold\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_producto_servicio = 'Luz'\nAND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nAND EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\nGROUP BY acc_proyecto_venta\nORDER BY total_lights_sold DESC\nLIMIT 1",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-17T21:08:29.345437+00:00",
+    "question": "What is the number of 'Luz' units sold by Naturgy this week?",
+    "submitted_sql": "SELECT COUNT(*) AS num_luz_units_sold\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_producto_servicio = 'Luz'\nAND sc_project = 'naturgy'\nAND EXTRACT(WEEK FROM sc_cc_sale_date) = EXTRACT(WEEK FROM CURRENT_DATE())",
+    "sanitized_sql": "SELECT COUNT(*) AS num_luz_units_sold\nFROM `accom-dw.accom_ventas.tb_result_energia`\nWHERE acc_producto_servicio = 'Luz'\nAND sc_project = 'naturgy'\nAND EXTRACT(WEEK FROM sc_cc_sale_date) = EXTRACT(WEEK FROM CURRENT_DATE()) LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  },
+  {
+    "timestamp": "2025-10-17T21:47:12.901165+00:00",
+    "question": "What is the total number of sales for each project?",
+    "submitted_sql": "SELECT acc_proyecto_venta, COUNT(*) AS total_sales FROM `accom-dw.accom_ventas.tb_result_energia` GROUP BY acc_proyecto_venta",
+    "sanitized_sql": "SELECT acc_proyecto_venta, COUNT(*) AS total_sales FROM `accom-dw.accom_ventas.tb_result_energia` GROUP BY acc_proyecto_venta LIMIT 1000",
+    "valid": true,
+    "issues": [],
+    "warnings": [
+      "Se aplicó automáticamente LIMIT 1000."
+    ]
+  }
+]

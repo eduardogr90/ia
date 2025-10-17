@@ -313,8 +313,7 @@ class CrewOrchestrator:
 
     def _build_interpreter_prompt(self, user_message: str, history_text: str) -> str:
         return (
-            "Analiza el mensaje del usuario y determina si necesitas generar una "
-            "consulta SQL para responder.\n"
+            "Analiza la intención del usuario y determina si requiere una consulta SQL, usando el historial de conversación."
             "Historial:\n"
             f"{history_text or '(sin historial previo)'}\n\n"
             f"Mensaje actual: {user_message}\n\n"
@@ -331,7 +330,7 @@ class CrewOrchestrator:
         interpreter_data: Dict[str, object],
     ) -> str:
         return (
-            "Genera una consulta SQL válida para BigQuery que responda la pregunta."\
+            "Genera una consulta SQL siguiendo el BigQuery Standard SQL. que responda la pregunta."\
             " Utiliza solo tablas y columnas disponibles en los metadatos.\n\n"
             f"Pregunta refinada: {refined_question}\n"
             f"Contexto adicional: {interpreter_data.get('reasoning', '')}\n\n"
@@ -392,9 +391,10 @@ class CrewOrchestrator:
         rows: List[Dict[str, object]] | None,
     ) -> str:
         base = [
-            "Analiza los datos devueltos por BigQuery y sintetiza los hallazgos en español.",
-            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo y,"
-            " si aplica, sugerencias de visualización.",
+            "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta."
+            "Si solo hay uno o pocos valores, responde de forma breve y directa."
+            "Sé preciso, conciso y basado únicamente en los resultados mostrados"
+            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo",
             f"Pregunta a resolver: {refined_question}",
         ]
         if sql:

@@ -17,7 +17,7 @@ def create_interpreter_agent(
     return Agent(
         role="InterpreterAgent",
         goal=(
-            "Analizar la intención del usuario, comprender el contexto de la "
+            "Analizar la intención del usuario, comprende el contexto de la "
             "conversación y determinar si se requiere una consulta SQL."
         ),
         backstory=(
