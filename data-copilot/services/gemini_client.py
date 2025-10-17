@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping
+from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from google.oauth2 import service_account
 from langchain_google_vertexai import VertexAI
@@ -252,8 +252,93 @@ def init_gemini_llm(
     return llm
 
 
+class GeminiClient:
+    """Small helper around a ``VertexAI`` LLM for analytical tasks."""
+
+    def __init__(self, llm: Optional[VertexAI] = None) -> None:
+        self._llm = llm or init_gemini_llm()
+
+    def set_llm(self, llm: VertexAI) -> None:
+        """Replace the underlying LLM instance."""
+
+        self._llm = llm
+
+    def analyze_results(
+        self,
+        results: list[dict[str, Any]] | None,
+        *,
+        question: str | None = None,
+        sql: str | None = None,
+    ) -> Dict[str, Any]:
+        """Ask Gemini to produce a narrative summary for query results."""
+
+        rows = results or []
+        serialized_rows = json.dumps(rows, ensure_ascii=False, indent=2)
+        prompt_parts = [
+            "Analiza los siguientes resultados de una consulta SQL y redacta un resumen ejecutivo en español.",
+            "Incluye tendencias, comparaciones relevantes y una breve interpretación de los datos.",
+            "Responde estrictamente en formato JSON con las claves: \"text\" y \"chart\".",
+            "La clave chart debe contener labels y values si corresponde; si no aplica, usa null.",
+        ]
+        if question:
+            prompt_parts.append(f"Pregunta original del usuario: {question}")
+        if sql:
+            prompt_parts.append("Consulta SQL ejecutada:")
+            prompt_parts.append(f"```sql\n{sql}\n```")
+        prompt_parts.append("Resultados obtenidos (formato JSON):")
+        prompt_parts.append(serialized_rows)
+        prompt_parts.append(
+            "Recuerda devolver un JSON válido. Ejemplo: {\"text\": \"...\", \"chart\": {\"labels\": [], \"values\": []}}"
+        )
+        prompt = "\n\n".join(prompt_parts)
+
+        try:
+            response = self._llm.invoke(prompt)
+        except Exception as exc:  # pragma: no cover - depende del entorno
+            LOGGER.exception("Error al solicitar análisis narrativo a Gemini: %s", exc)
+            return {
+                "text": "No fue posible generar el análisis con Gemini.",
+                "chart": None,
+                "error": str(exc),
+            }
+
+        if hasattr(response, "content"):
+            raw_text = response.content  # type: ignore[attr-defined]
+        else:
+            raw_text = str(response)
+
+        payload: Dict[str, Any] | None = None
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError:
+            start = raw_text.find("{")
+            end = raw_text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    payload = json.loads(raw_text[start : end + 1])
+                except json.JSONDecodeError:
+                    payload = None
+
+        if not isinstance(payload, dict):
+            return {"text": raw_text.strip(), "chart": None}
+
+        text = payload.get("text")
+        chart = payload.get("chart")
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
+        if isinstance(chart, dict):
+            labels = chart.get("labels")
+            values = chart.get("values")
+            if not isinstance(labels, list) or not isinstance(values, list):
+                chart = None
+        else:
+            chart = None
+        return {"text": text.strip(), "chart": chart}
+
+
 __all__ = [
     "DEFAULT_VERTEX_LOCATION",
     "load_vertex_credentials",
     "init_gemini_llm",
+    "GeminiClient",
 ]

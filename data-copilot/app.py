@@ -112,10 +112,17 @@ def send_message():
         LOGGER.exception("Excepción no controlada al procesar el mensaje")
         assistant_reply = f"{exc.__class__.__name__}: {exc}"
 
+    chart_payload = orchestration.chart if orchestration else None
     conversation = conversation_service.append_message(
-        username, conv_id, "assistant", assistant_reply
+        username,
+        conv_id,
+        "assistant",
+        assistant_reply,
+        extra={"chart": chart_payload} if chart_payload else None,
     )
     response_payload: Dict[str, object] = {"response": assistant_reply}
+    if chart_payload:
+        response_payload["chart"] = chart_payload
     if conversation:
         response_payload["conversation"] = conversation.to_dict()
     if orchestration:
@@ -125,6 +132,8 @@ def send_message():
             "error": orchestration.error,
             "interpreter": orchestration.interpreter_output,
             "sql_output": orchestration.sql_output,
+            "validation": orchestration.validation_output,
+            "analysis": orchestration.analyzer_output,
         }
     return jsonify(response_payload)
 
