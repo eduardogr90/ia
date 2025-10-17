@@ -76,11 +76,22 @@ class ConversationService:
         except json.JSONDecodeError:
             return None
 
-    def append_message(self, username: str, conv_id: str, role: str, content: str) -> Optional[Conversation]:
+    def append_message(
+        self,
+        username: str,
+        conv_id: str,
+        role: str,
+        content: str,
+        *,
+        extra: Optional[Dict[str, object]] = None,
+    ) -> Optional[Conversation]:
         conversation = self.load_conversation(username, conv_id)
         if not conversation:
             return None
-        conversation.messages.append({"role": role, "content": content})
+        message = {"role": role, "content": content}
+        if extra:
+            message.update(extra)
+        conversation.messages.append(message)
         self._save_conversation(username, conversation)
         return conversation
 
