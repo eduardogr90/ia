@@ -8,7 +8,6 @@ from .agents_utils import (
     load_model_metadata,
     log_sql_audit,
     normalize_identifier,
-    validate_sql_statement,
     extract_table_alias,
 )
 from .analyzer_agent import GeminiAnalysisTool, create_analyzer_agent
@@ -30,7 +29,6 @@ __all__ = [
     "create_validator_agent",
     "create_analyzer_agent",
     "load_model_metadata",
-    "validate_sql_statement",
     "normalize_identifier",
     "expression_name",
     "extract_table_alias",

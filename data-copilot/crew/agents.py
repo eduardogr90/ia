@@ -28,7 +28,6 @@ create_executor_agent = _executor.create_executor_agent
 create_validator_agent = _validator.create_validator_agent
 create_analyzer_agent = _analyzer.create_analyzer_agent
 
-validate_sql_statement = _agents_utils.validate_sql_statement
 normalize_identifier = _agents_utils.normalize_identifier
 expression_name = _agents_utils.expression_name
 extract_table_alias = _agents_utils.extract_table_alias
@@ -51,7 +50,6 @@ __all__ = [
     "create_validator_agent",
     "create_analyzer_agent",
     "load_model_metadata",
-    "validate_sql_statement",
     "normalize_identifier",
     "expression_name",
     "extract_table_alias",

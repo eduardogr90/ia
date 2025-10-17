@@ -340,6 +340,5 @@ __all__ = [
     "load_model_metadata",
     "log_sql_audit",
     "normalize_identifier",
-    "validate_sql_statement",
     "extract_table_alias",
 ]

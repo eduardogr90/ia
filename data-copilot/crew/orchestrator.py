@@ -171,6 +171,7 @@ class CrewOrchestrator:
         self.interpreter_agent = create_interpreter_agent(llm=self._llm)
         self.sql_agent = create_sql_generator_agent(self.metadata_tool, llm=self._llm)
         self.executor_agent = create_executor_agent(self.bigquery_tool, llm=self._llm)
+        self.validation_tool.set_llm(self._llm)
         self.validator_agent = create_validator_agent(
             self.validation_tool, llm=self._llm
         )
