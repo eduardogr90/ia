@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, List, Optional
 
 from crewai import Agent, Crew, Process, Task
@@ -23,6 +26,7 @@ from crew.agents import (
     load_model_metadata,
 )
 from google.auth.exceptions import DefaultCredentialsError
+from config import settings
 from services.bigquery_client import BigQueryClient
 from services.gemini_client import (
     DEFAULT_VERTEX_LOCATION,
@@ -57,6 +61,10 @@ class OrchestrationResult:
     rows: Optional[List[Dict[str, object]]]
     error: Optional[str]
     chart: Optional[Dict[str, object]]
+    flow_trace: List[Dict[str, object]]
+    total_tokens: int
+    total_latency_ms: float
+    total_cost_usd: Optional[float]
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -69,6 +77,10 @@ class OrchestrationResult:
             "rows": self.rows,
             "error": self.error,
             "chart": self.chart,
+            "flow_trace": self.flow_trace,
+            "total_tokens": self.total_tokens,
+            "total_latency_ms": self.total_latency_ms,
+            "total_cost_usd": self.total_cost_usd,
         }
 
 
@@ -82,6 +94,9 @@ class CrewOrchestrator:
     ) -> None:
         self.metadata_dir = metadata_dir or Path(__file__).resolve().parent.parent / "data" / "model"
         self.metadata = load_model_metadata(self.metadata_dir)
+
+        self.prompt_cost_per_1k = settings.GEMINI_PROMPT_COST_PER_1K
+        self.completion_cost_per_1k = settings.GEMINI_COMPLETION_COST_PER_1K
 
         self.history_tool = ConversationHistoryTool()
         # ``SQLMetadataTool`` hereda de ``BaseTool`` (y, por extensión, de ``BaseModel``)
@@ -178,13 +193,22 @@ class CrewOrchestrator:
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
 
-    def _run_task(self, agent: Agent, task: Task) -> str:
+    def _run_task(
+        self,
+        agent: Agent,
+        task: Task,
+        *,
+        input_context: object | None = None,
+        extra_metadata: Optional[Dict[str, object]] = None,
+        uses_llm: bool = True,
+    ) -> tuple[str, Dict[str, object]]:
         agent_role = getattr(agent, "role", agent.__class__.__name__)
         crew = Crew(
             agents=[agent],
             tasks=[task],
             process=Process.sequential,
         )
+        start_time = perf_counter()
         try:
             result = crew.kickoff()
         except Exception as exc:  # pragma: no cover - depends on runtime
@@ -201,12 +225,66 @@ class CrewOrchestrator:
                 f"El agente {agent_role} falló durante la ejecución",
                 detail=str(exc),
             ) from exc
+        latency_ms = (perf_counter() - start_time) * 1000.0
         output = getattr(task, "output", None)
         if isinstance(output, str) and output.strip():
-            return output
+            response_text = output
         if isinstance(result, str):
-            return result
-        return str(result)
+            response_text = result
+        else:
+            response_text = str(result)
+
+        trace_entry: Dict[str, object] = {
+            "agent": agent_role,
+            "prompt_sent": task.description,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "latency_ms": round(latency_ms, 3),
+        }
+
+        if uses_llm:
+            prompt_tokens = self._estimate_tokens(task.description)
+            completion_tokens = self._estimate_tokens(response_text)
+            tokens = {
+                "prompt": prompt_tokens,
+                "completion": completion_tokens,
+                "total": prompt_tokens + completion_tokens,
+            }
+            trace_entry["tokens"] = tokens
+            trace_entry["llm_response"] = response_text
+            cost = self._estimate_cost(prompt_tokens, completion_tokens)
+            if cost is not None:
+                trace_entry["cost_usd"] = cost
+        else:
+            trace_entry["tokens"] = {"prompt": 0, "completion": 0, "total": 0}
+            trace_entry["llm_response"] = response_text
+
+        if input_context is not None:
+            trace_entry["input"] = input_context
+        if extra_metadata:
+            trace_entry.update(extra_metadata)
+
+        return response_text, trace_entry
+
+    def _estimate_tokens(self, text: str | None) -> int:
+        if not text:
+            return 0
+        normalized = str(text).strip()
+        if not normalized:
+            return 0
+        return max(1, math.ceil(len(normalized) / 4))
+
+    def _estimate_cost(self, prompt_tokens: int, completion_tokens: int) -> Optional[float]:
+        cost = 0.0
+        has_cost = False
+        if self.prompt_cost_per_1k > 0:
+            cost += (prompt_tokens / 1000.0) * self.prompt_cost_per_1k
+            has_cost = True
+        if self.completion_cost_per_1k > 0:
+            cost += (completion_tokens / 1000.0) * self.completion_cost_per_1k
+            has_cost = True
+        if not has_cost:
+            return None
+        return round(cost, 8)
 
     def _contains_default_credentials_error(self, exc: Exception) -> bool:
         """Walk the exception chain looking for DefaultCredentialsError."""
@@ -335,6 +413,65 @@ class CrewOrchestrator:
     def handle_message(self, user_message: str, history: List[Dict[str, str]]) -> OrchestrationResult:
         self._ensure_llm()
 
+        flow_trace: List[Dict[str, object]] = []
+        total_tokens = 0
+        total_latency_ms = 0.0
+        total_cost_usd = 0.0
+        cost_available = False
+
+        def append_trace(entry: Dict[str, object]) -> None:
+            nonlocal total_tokens, total_latency_ms, total_cost_usd, cost_available
+            flow_trace.append(entry)
+            tokens = entry.get("tokens")
+            if isinstance(tokens, dict):
+                try:
+                    total_tokens += int(tokens.get("total") or 0)
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    pass
+            latency = entry.get("latency_ms")
+            if latency is not None:
+                try:
+                    total_latency_ms += float(latency)
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    pass
+            cost = entry.get("cost_usd")
+            if cost is not None:
+                try:
+                    total_cost_usd += float(cost)
+                    cost_available = True
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    pass
+
+        def finalize_result(
+            *,
+            response: str,
+            interpreter_output: Dict[str, object],
+            sql_output: Dict[str, object],
+            validation_output: Dict[str, object],
+            analyzer_output: Dict[str, object],
+            sql: Optional[str],
+            rows: Optional[List[Dict[str, object]]],
+            error: Optional[str],
+            chart: Optional[Dict[str, object]],
+        ) -> OrchestrationResult:
+            aggregated_latency = round(total_latency_ms, 3)
+            aggregated_cost = round(total_cost_usd, 8) if cost_available else None
+            return OrchestrationResult(
+                response=response,
+                interpreter_output=interpreter_output,
+                sql_output=sql_output,
+                validation_output=validation_output,
+                analyzer_output=analyzer_output,
+                sql=sql,
+                rows=rows,
+                error=error,
+                chart=chart,
+                flow_trace=flow_trace,
+                total_tokens=total_tokens,
+                total_latency_ms=aggregated_latency,
+                total_cost_usd=aggregated_cost,
+            )
+
         try:
             if not all(
                 [
@@ -362,7 +499,12 @@ class CrewOrchestrator:
                 agent=self.interpreter_agent,
                 expected_output="JSON con requires_sql, reasoning y refined_question",
             )
-            interpreter_raw = self._run_task(self.interpreter_agent, interpreter_task)
+            interpreter_raw, interpreter_trace = self._run_task(
+                self.interpreter_agent,
+                interpreter_task,
+                input_context=user_message,
+            )
+            append_trace(interpreter_trace)
             interpreter_data = self._parse_json(interpreter_raw)
 
             requires_sql = bool(interpreter_data.get("requires_sql", False))
@@ -381,7 +523,12 @@ class CrewOrchestrator:
                     agent=self.sql_agent,
                     expected_output="JSON con sql y analysis",
                 )
-                sql_raw = self._run_task(self.sql_agent, sql_task)
+                sql_raw, sql_trace = self._run_task(
+                    self.sql_agent,
+                    sql_task,
+                    input_context=refined_question,
+                )
+                append_trace(sql_trace)
                 sql_data = self._parse_json(sql_raw)
 
             sql_text = sql_data.get("sql") if isinstance(sql_data, dict) else None
@@ -399,7 +546,11 @@ class CrewOrchestrator:
                     agent=self.validator_agent,
                     expected_output="JSON con valid, message, sanitized_sql, issues, warnings",
                 )
-                validation_raw = self._run_task(self.validator_agent, validator_task)
+                validation_raw, validation_trace = self._run_task(
+                    self.validator_agent,
+                    validator_task,
+                    extra_metadata={"input_sql": sql_text},
+                )
                 validation_data = self._parse_json(validation_raw)
                 is_valid = bool(validation_data.get("valid"))
                 sanitized_sql = (
@@ -409,12 +560,16 @@ class CrewOrchestrator:
                 )
                 if isinstance(sanitized_sql, str) and not sanitized_sql.strip():
                     sanitized_sql = None
+                if sanitized_sql:
+                    validation_trace["sanitized_sql"] = sanitized_sql
+                validation_trace["validation_result"] = "OK" if is_valid else "RECHAZADA"
+                append_trace(validation_trace)
                 if not is_valid:
                     message = (
                         validation_data.get("message")
                         or "La consulta fue bloqueada por motivos de seguridad."
                     )
-                    return OrchestrationResult(
+                    return finalize_result(
                         response=str(message).strip(),
                         interpreter_output=interpreter_data,
                         sql_output=sql_data,
@@ -427,7 +582,7 @@ class CrewOrchestrator:
                     )
 
             if requires_sql and not sanitized_sql:
-                return OrchestrationResult(
+                return finalize_result(
                     response="No se pudo generar una consulta SQL válida.",
                     interpreter_output=interpreter_data,
                     sql_output=sql_data,
@@ -452,14 +607,22 @@ class CrewOrchestrator:
                     agent=self.executor_agent,
                     expected_output="Confirmación de ejecución o error",
                 )
-                _ = self._run_task(self.executor_agent, executor_task)
+                _, executor_trace = self._run_task(
+                    self.executor_agent,
+                    executor_task,
+                    extra_metadata={"input_sql": sanitized_sql},
+                )
                 rows = self.bigquery_tool.last_result
                 execution_error = self.bigquery_tool.last_error
+                executor_trace["rows_returned"] = len(rows or [])
+                if execution_error:
+                    executor_trace["error"] = execution_error
+                append_trace(executor_trace)
                 if execution_error:
                     error_message = (
                         f"Error al ejecutar la consulta en BigQuery: {execution_error}"
                     )
-                    return OrchestrationResult(
+                    return finalize_result(
                         response=error_message,
                         interpreter_output=interpreter_data,
                         sql_output=sql_data,
@@ -486,14 +649,19 @@ class CrewOrchestrator:
                     agent=self.analyzer_agent,
                     expected_output="JSON con text y chart",
                 )
-                analyzer_raw = self._run_task(self.analyzer_agent, analyzer_task)
+                analyzer_raw, analyzer_trace = self._run_task(
+                    self.analyzer_agent,
+                    analyzer_task,
+                    extra_metadata={"input_rows": len(rows or [])},
+                )
                 analyzer_output = self._parse_json(analyzer_raw)
+                append_trace(analyzer_trace)
                 response_text = analyzer_output.get("text")
                 if not isinstance(response_text, str) or not response_text.strip():
                     response_text = str(analyzer_raw).strip()
                 chart = analyzer_output.get("chart") if isinstance(analyzer_output, dict) else None
                 chart_payload = chart if isinstance(chart, dict) else None
-                return OrchestrationResult(
+                return finalize_result(
                     response=response_text.strip(),
                     interpreter_output=interpreter_data,
                     sql_output=sql_data,
@@ -512,7 +680,7 @@ class CrewOrchestrator:
                 else None
             ) or "La pregunta no requiere ejecutar SQL."
             analyzer_output = {"text": str(fallback_text), "chart": None}
-            return OrchestrationResult(
+            return finalize_result(
                 response=str(fallback_text).strip(),
                 interpreter_output=interpreter_data,
                 sql_output=sql_data,

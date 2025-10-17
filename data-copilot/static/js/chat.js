@@ -4,6 +4,7 @@
   const messagesContainer = document.getElementById('messages');
   const chatTitle = document.getElementById('chat-title');
   const chatStatus = document.getElementById('chat-status');
+  const viewTracesButton = document.getElementById('view-traces');
   const emptyState = document.getElementById('empty-state');
   const messageForm = document.getElementById('message-form');
   const messageInput = document.getElementById('message-input');
@@ -39,7 +40,12 @@
           item.classList.add('active');
         }
         const title = document.createElement('span');
-        title.textContent = conversation.messages[conversation.messages.length - 1]?.content || conversation.id;
+        const latestMessage = conversation.messages?.[conversation.messages.length - 1]?.content;
+        const displayTitle =
+          (conversation.title && conversation.title.trim()) ||
+          (latestMessage && String(latestMessage).trim()) ||
+          conversation.id;
+        title.textContent = displayTitle;
         item.appendChild(title);
 
         const deleteButton = document.createElement('button');
@@ -256,16 +262,23 @@
   function setActiveConversation(conversation) {
     if (conversation) {
       currentConversationId = conversation.id;
-      chatTitle.textContent = `Conversación ${conversation.id}`;
+      const headerTitle =
+        (conversation.title && conversation.title.trim()) ||
+        `Conversación ${conversation.id}`;
+      chatTitle.textContent = headerTitle;
       messageInput.disabled = false;
       submitButton.disabled = false;
       messageInput.focus();
+      viewTracesButton.disabled = false;
+      viewTracesButton.dataset.convId = conversation.id;
     } else {
       currentConversationId = null;
       chatTitle.textContent = 'Selecciona una conversación';
       messageInput.disabled = true;
       submitButton.disabled = true;
       messageInput.value = '';
+      viewTracesButton.disabled = true;
+      delete viewTracesButton.dataset.convId;
     }
     renderConversationList();
     renderMessages(conversation);
@@ -379,6 +392,16 @@
 
   // Event bindings ----------------------------------------------------
   newChatButton.addEventListener('click', newConversation);
+
+  viewTracesButton.addEventListener('click', () => {
+    if (viewTracesButton.disabled) {
+      return;
+    }
+    const convId = viewTracesButton.dataset.convId;
+    if (convId) {
+      window.open(`/traces/${encodeURIComponent(convId)}`, '_blank');
+    }
+  });
 
   messageForm.addEventListener('submit', (event) => {
     event.preventDefault();
