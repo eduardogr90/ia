@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2025-10-17T09:02:35.759907+00:00",
+    "question": "Generate a table displaying projects and sales data for the year 2025, categorized by service.",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    COUNT(*) AS sales_count\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = 2025\nGROUP BY\n    acc_proyecto_venta,\n    acc_producto_servicio",
+    "sanitized_sql": null,
+    "valid": false,
+    "issues": [
+      "La tabla 'acc_fecha_venta' no está autorizada por el modelo."
+    ],
+    "warnings": []
+  }
+]
