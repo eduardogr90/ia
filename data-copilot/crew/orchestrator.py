@@ -140,6 +140,7 @@ class CrewOrchestrator:
 
     # ------------------------------------------------------------------
     def _ensure_llm(self) -> None:
+        """Instantiate the shared Vertex AI LLM and the dependent agents."""
         if self._llm_ready:
             return
         location = os.environ.get("VERTEX_LOCATION") or DEFAULT_VERTEX_LOCATION
@@ -185,6 +186,7 @@ class CrewOrchestrator:
         self._llm_ready = True
 
     def _format_history(self, history: List[Dict[str, str]]) -> str:
+        """Return a compact textual representation of the chat history."""
         lines = []
         for item in history:
             role = item.get("role", "user")
@@ -193,6 +195,7 @@ class CrewOrchestrator:
         return "\n".join(lines)
 
     def _normalize_text(self, text: str | None) -> str:
+        """Normalize text for semantic analysis removing accents and case."""
         if not text:
             return ""
         normalized = unicodedata.normalize("NFD", text)
@@ -202,6 +205,7 @@ class CrewOrchestrator:
         return without_marks.lower()
 
     def _analyze_question_semantics(self, question: str) -> Dict[str, object]:
+        """Derive high-level semantic hints from the raw user question."""
         normalized = self._normalize_text(question)
         is_comparative = any(
             keyword in normalized
@@ -330,6 +334,7 @@ class CrewOrchestrator:
         extra_metadata: Optional[Dict[str, object]] = None,
         uses_llm: bool = True,
     ) -> tuple[str, Dict[str, object]]:
+        """Execute *task* with *agent* and capture telemetry for traceability."""
         agent_role = getattr(agent, "role", agent.__class__.__name__)
         crew = Crew(
             agents=[agent],
@@ -394,6 +399,7 @@ class CrewOrchestrator:
         return response_text, trace_entry
 
     def _estimate_tokens(self, text: str | None) -> int:
+        """Rudimentarily approximate token usage for logging purposes."""
         if not text:
             return 0
         normalized = str(text).strip()
@@ -402,6 +408,7 @@ class CrewOrchestrator:
         return max(1, math.ceil(len(normalized) / 4))
 
     def _estimate_cost(self, prompt_tokens: int, completion_tokens: int) -> Optional[float]:
+        """Estimate the USD cost of a model call if pricing metadata exists."""
         cost = 0.0
         has_cost = False
         if self.prompt_cost_per_1k > 0:
@@ -427,6 +434,7 @@ class CrewOrchestrator:
         return False
 
     def _parse_json(self, payload: str) -> Dict[str, object]:
+        """Parse JSON produced by agents, tolerating minor formatting issues."""
         try:
             return json.loads(payload)
         except json.JSONDecodeError:
@@ -440,6 +448,7 @@ class CrewOrchestrator:
             return {"raw": payload.strip()}
 
     def _coerce_bool(self, value: object) -> bool:
+        """Coerce heterogeneous values into booleans for semantics payloads."""
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -450,6 +459,7 @@ class CrewOrchestrator:
         return False
 
     def _extract_semantics(self, interpreter_data: Dict[str, object]) -> Dict[str, object]:
+        """Merge semantic hints coming from the interpreter agent output."""
         semantics: Dict[str, object] = {}
         raw_semantics = interpreter_data.get("semantics")
         if isinstance(raw_semantics, dict):
@@ -484,6 +494,7 @@ class CrewOrchestrator:
     def _build_interpreter_prompt(
         self, user_message: str, history_text: str, has_history: bool
     ) -> str:
+        """Compose the system prompt sent to the interpreter agent."""
         base = [
             "Analiza la intención del usuario y determina si requiere una consulta SQL.",
         ]
@@ -516,6 +527,7 @@ class CrewOrchestrator:
         interpreter_data: Dict[str, object],
         semantics: Dict[str, object],
     ) -> str:
+        """Create the instruction block used by the SQL generator agent."""
         base = [
             "Genera una consulta SQL siguiendo el BigQuery Standard SQL que responda la pregunta.",
             "Utiliza solo tablas y columnas disponibles en los metadatos y respeta todos los filtros implícitos en la solicitud.",
@@ -569,6 +581,7 @@ class CrewOrchestrator:
         sql: Optional[str],
         interpreter_data: Dict[str, object],
     ) -> str:
+        """Generate instructions for the executor agent running BigQuery."""
         base = [
             "Eres el agente ejecutor. Recibiste una consulta SQL que ya fue validada."
             " Debes ejecutarla usando exclusivamente el tool `bigquery_sql_runner`."
@@ -597,6 +610,7 @@ class CrewOrchestrator:
         sql: str,
         refined_question: str,
     ) -> str:
+        """Prepare the validation prompt that guards SQL safety."""
         return (
             "Evalúa la sentencia SQL propuesta antes de su ejecución. Debes usar el tool"
             " `sql_validation_tool` para verificar que sea segura.\n"
@@ -613,6 +627,7 @@ class CrewOrchestrator:
         rows: List[Dict[str, object]] | None,
         semantics: Dict[str, object],
     ) -> str:
+        """Build the prompt that guides the Gemini-powered analysis agent."""
         base = [
             "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
             "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
@@ -662,6 +677,7 @@ class CrewOrchestrator:
 
     # ------------------------------------------------------------------
     def handle_message(self, user_message: str, history: List[Dict[str, str]]) -> OrchestrationResult:
+        """Run the full multi-agent pipeline for a user utterance."""
         self._ensure_llm()
 
         flow_trace: List[Dict[str, object]] = []
