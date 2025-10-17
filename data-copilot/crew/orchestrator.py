@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -190,6 +191,135 @@ class CrewOrchestrator:
             content = item.get("content", "")
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
+
+    def _normalize_text(self, text: str | None) -> str:
+        if not text:
+            return ""
+        normalized = unicodedata.normalize("NFD", text)
+        without_marks = "".join(
+            char for char in normalized if unicodedata.category(char) != "Mn"
+        )
+        return without_marks.lower()
+
+    def _analyze_question_semantics(self, question: str) -> Dict[str, object]:
+        normalized = self._normalize_text(question)
+        is_comparative = any(
+            keyword in normalized
+            for keyword in (
+                " vs ",
+                "vs.",
+                "compar",
+                "diferenc",
+                "respecto",
+                "frente a",
+                "variac",
+                "evolu",
+                "tendenc",
+                "increment",
+                "disminu",
+            )
+        )
+        wants_visual = any(
+            keyword in normalized
+            for keyword in ("graf", "visualiz", "chart", "diagrama")
+        )
+
+        iteration_patterns = (
+            "por mes",
+            "por trimestre",
+            "por ano",
+            "por año",
+            "por semana",
+            "por dia",
+            "por día",
+            "mes a mes",
+            "trimestre a trimestre",
+            "semana a semana",
+            "dia a dia",
+            "día a día",
+            "mensualmente",
+            "trimestralmente",
+            "semanalmente",
+            "diariamente",
+        )
+        has_iteration = any(pattern in normalized for pattern in iteration_patterns)
+
+        month_names = (
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "setiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
+        )
+
+        period_candidates: List[str] = []
+        if not is_comparative and not has_iteration:
+            if any(name in normalized for name in month_names) or any(
+                keyword in normalized
+                for keyword in (
+                    " del mes ",
+                    "en el mes ",
+                    "durante el mes",
+                    "ultimo mes",
+                    "último mes",
+                    "mes pasado",
+                )
+            ):
+                period_candidates.append("monthly")
+            if "trimestre" in normalized or "trimestr" in normalized:
+                period_candidates.append("quarterly")
+            if any(
+                keyword in normalized
+                for keyword in (
+                    " ano ",
+                    " año ",
+                    " anual",
+                    "durante 20",
+                    "en 20",
+                    "del 20",
+                )
+            ):
+                period_candidates.append("yearly")
+
+        breakdown_blockers = {
+            "monthly": ("semana", "semanal", "dia", "día", "diario"),
+            "quarterly": ("mes", "mensual", "semana", "semanal"),
+            "yearly": ("mes", "mensual", "trimestre", "trimestr", "semana", "semanal"),
+        }
+
+        aggregated_period = None
+        for candidate in period_candidates:
+            blockers = breakdown_blockers.get(candidate, ())
+            if any(blocker in normalized for blocker in blockers):
+                continue
+            aggregated_period = candidate
+            break
+
+        period_labels = {
+            "monthly": ("mensual", "semanal"),
+            "quarterly": ("trimestral", "mensual"),
+            "yearly": ("anual", "trimestral"),
+        }
+        aggregated_label, breakdown_unit = (None, None)
+        if aggregated_period:
+            aggregated_label, breakdown_unit = period_labels.get(aggregated_period, (None, None))
+
+        return {
+            "normalized": normalized,
+            "is_comparative": is_comparative,
+            "wants_visual": wants_visual,
+            "aggregated_period": aggregated_period,
+            "aggregated_label": aggregated_label,
+            "breakdown_unit": breakdown_unit,
+        }
 
     def _run_task(
         self,
