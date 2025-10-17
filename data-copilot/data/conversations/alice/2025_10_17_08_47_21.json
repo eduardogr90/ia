@@ -1,0 +1,21 @@
+{
+  "id": "2025_10_17_08_47_21",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Cuantas ventas hicimos el dia 1 de este mes?"
+    },
+    {
+      "role": "assistant",
+      "content": "El total de ventas realizadas el primer día de este mes es de 790."
+    },
+    {
+      "role": "user",
+      "content": "desglosamelo por proyectos"
+    },
+    {
+      "role": "assistant",
+      "content": "Aquí está el desglose de ventas por proyecto para el primer día del mes actual:\n\n*   Endesa PT: 75\n*   Endesa Sales PT: 91\n*   Endesa: 101\n*   Naturgy: 340\n*   Repsol: 122\n*   iberdrola-pt: 24\n*   Endesa-Sales: 16\n*   Naturgy Sales Alianza: 21"
+    }
+  ]
+}
