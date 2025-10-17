@@ -9,6 +9,8 @@
   const messageInput = document.getElementById('message-input');
   const submitButton = messageForm.querySelector('button[type="submit"]');
   const newChatButton = document.getElementById('new-chat');
+  const THINKING_GIF_URL =
+    'https://media.tenor.com/On7kvXhzml4AAAAj/loading-gif.gif';
 
   let currentConversationId = null;
   let conversations = new Map();
@@ -78,7 +80,25 @@
     conversation.messages.forEach((message) => {
       const bubble = document.createElement('div');
       bubble.className = `message ${message.role}`;
-      bubble.textContent = message.content;
+      if (message.loading) {
+        bubble.classList.add('loading');
+        const indicator = document.createElement('div');
+        indicator.className = 'thinking-indicator';
+
+        const gif = document.createElement('img');
+        gif.src = message.gif || THINKING_GIF_URL;
+        gif.alt = 'Pensando...';
+        gif.className = 'thinking-gif';
+        indicator.appendChild(gif);
+
+        const text = document.createElement('span');
+        text.textContent = message.content || 'Pensando...';
+        indicator.appendChild(text);
+
+        bubble.appendChild(indicator);
+      } else {
+        bubble.textContent = message.content;
+      }
       messagesContainer.appendChild(bubble);
     });
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -156,6 +176,28 @@
   }
 
   async function sendMessage(message) {
+    const conversation = conversations.get(currentConversationId);
+    if (!conversation) {
+      return;
+    }
+
+    const userMessage = { role: 'user', content: message };
+    const placeholderMessage = {
+      role: 'assistant',
+      content: 'Pensando...',
+      loading: true,
+      gif: THINKING_GIF_URL,
+    };
+
+    if (!Array.isArray(conversation.messages)) {
+      conversation.messages = [];
+    }
+
+    conversation.messages.push(userMessage);
+    conversation.messages.push(placeholderMessage);
+    renderMessages(conversation);
+    renderConversationList();
+
     try {
       const response = await fetch('/send_message', {
         method: 'POST',
@@ -171,6 +213,18 @@
     } catch (error) {
       console.error(error);
       showStatus('No se pudo enviar el mensaje', 3000);
+      const index = conversation.messages.indexOf(placeholderMessage);
+      if (index !== -1) {
+        conversation.messages.splice(index, 1);
+      }
+      const userIndex = conversation.messages.lastIndexOf(userMessage);
+      if (userIndex !== -1) {
+        conversation.messages.splice(userIndex, 1);
+      }
+      renderMessages(conversation);
+      renderConversationList();
+      messageInput.value = message;
+      messageInput.focus();
     }
   }
 
@@ -185,6 +239,7 @@
     }
     messageInput.value = '';
     sendMessage(text);
+    messageInput.focus();
   });
 
   messageInput.addEventListener('keydown', (event) => {
