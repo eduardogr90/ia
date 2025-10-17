@@ -11,9 +11,9 @@ from crewai import Agent
 from crewai.tools import BaseTool
 from pydantic import Field
 
-import sqlparse
-from sqlparse.sql import Identifier, IdentifierList
-from sqlparse.tokens import Keyword
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import ParseError
 
 
 class ConversationHistoryTool(BaseTool):
@@ -249,35 +249,29 @@ def validate_sql_statement(
             issues.append("La consulta contiene palabras clave no permitidas.")
             break
 
-    parsed = sqlparse.parse(sanitized_sql or "")
-    if not parsed:
-        issues.append("No se pudo analizar la consulta SQL.")
-        statement = None
-    else:
-        statement = parsed[0]
-        if statement.get_type() != "SELECT":
-            issues.append("Solo se permiten consultas SELECT.")
+    parsed_expression: exp.Expression | None = None
+    if sanitized_sql:
+        try:
+            parsed_expression = sqlglot.parse_one(sanitized_sql or "", read="bigquery")
+        except ParseError as exc:
+            issues.append(f"No se pudo analizar la consulta SQL: {exc}.")
+        except Exception:
+            issues.append("No se pudo analizar la consulta SQL.")
 
     catalog = build_metadata_catalog(metadata)
     alias_map: Dict[str, str] = {}
     referenced_tables: list[str] = []
-    if statement is not None:
-        referenced_tables = extract_tables(statement)
-        for table in referenced_tables:
-            entry = resolve_table(table, catalog)
-            if entry is None:
-                issues.append(f"La tabla '{table}' no está autorizada por el modelo.")
-            else:
-                alias = entry.get("alias")
-                canonical = entry["name"]
-                if alias:
-                    alias_map[alias] = canonical
-                alias_map[canonical] = canonical
-                path_key = entry.get("path")
-                if isinstance(path_key, str):
-                    alias_map[path_key] = canonical
 
-        column_issues = validate_columns(sanitized_sql, alias_map, catalog)
+    if parsed_expression is not None:
+        if not is_select_statement(parsed_expression):
+            issues.append("Solo se permiten consultas SELECT.")
+
+        table_results = analyze_tables(parsed_expression, catalog)
+        referenced_tables = table_results["tables"]
+        alias_map = table_results["aliases"]
+        issues.extend(table_results["issues"])
+
+        column_issues = collect_column_issues(parsed_expression, alias_map, catalog)
         issues.extend(column_issues)
 
     has_limit = bool(re.search(r"\blimit\b", normalized))
@@ -315,98 +309,194 @@ def validate_sql_statement(
     return result
 
 
+def normalize_identifier(identifier: str | None) -> str:
+    """Normalize identifiers by removing BigQuery quotes and lowering the case."""
+
+    if not identifier:
+        return ""
+    return identifier.replace("`", "").strip().lower()
+
+
+def expression_name(value: Any) -> str:
+    """Extract the textual representation of a sqlglot expression."""
+
+    if value is None:
+        return ""
+    if isinstance(value, exp.Expression):
+        if hasattr(value, "name"):
+            name = value.name  # type: ignore[attr-defined]
+            if isinstance(name, str):
+                return name
+        try:
+            return value.sql(dialect="bigquery")
+        except Exception:  # pragma: no cover - defensive
+            return str(value)
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def extract_table_alias(table_expr: exp.Table) -> str | None:
+    """Return the alias assigned to a table expression, if any."""
+
+    alias_expr = table_expr.args.get("alias")
+    if alias_expr is None:
+        return None
+    if isinstance(alias_expr, exp.TableAlias):
+        if isinstance(alias_expr.this, exp.Identifier):
+            return normalize_identifier(alias_expr.this.name)
+        alias_name = expression_name(alias_expr.this)
+        if alias_name:
+            return normalize_identifier(alias_name)
+    if isinstance(alias_expr, exp.Identifier):
+        return normalize_identifier(alias_expr.name)
+    alias_name = expression_name(alias_expr)
+    if alias_name:
+        return normalize_identifier(alias_name)
+    return None
+
+
+def analyze_tables(
+    expression: exp.Expression, catalog: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Validate table references and collect alias mappings."""
+
+    issues: list[str] = []
+    aliases: Dict[str, str] = {}
+    referenced_tables: list[str] = []
+    seen_tables: set[str] = set()
+
+    for table_expr in expression.find_all(exp.Table):
+        base_name = expression_name(table_expr.this)
+        catalog_name = expression_name(table_expr.args.get("catalog"))
+        db_name = expression_name(table_expr.args.get("db"))
+
+        candidates: list[str] = []
+        normalized_base = normalize_identifier(base_name)
+        normalized_db = normalize_identifier(db_name)
+        normalized_catalog = normalize_identifier(catalog_name)
+
+        if normalized_base:
+            candidates.append(normalized_base)
+        if normalized_db and normalized_base:
+            candidates.append(f"{normalized_db}.{normalized_base}")
+        if normalized_catalog and normalized_db and normalized_base:
+            candidates.append(f"{normalized_catalog}.{normalized_db}.{normalized_base}")
+        if normalized_catalog and normalized_base:
+            candidates.append(f"{normalized_catalog}.{normalized_base}")
+
+        entry = None
+        for candidate in candidates:
+            entry = catalog.get(candidate)
+            if entry:
+                break
+
+        display_name = base_name.replace("`", "") if base_name else base_name
+        if entry is None:
+            issues.append(
+                f"La tabla '{display_name or table_expr.sql(dialect='bigquery')}' no está autorizada por el modelo."
+            )
+            continue
+
+        canonical = entry["name"]
+        if canonical not in seen_tables:
+            referenced_tables.append(canonical)
+            seen_tables.add(canonical)
+
+        for alias_key in entry.get("aliases", {canonical}):
+            aliases[alias_key] = canonical
+
+        table_alias = extract_table_alias(table_expr)
+        if table_alias:
+            aliases[table_alias] = canonical
+
+    return {
+        "tables": referenced_tables,
+        "aliases": aliases,
+        "issues": issues,
+    }
+
+
+def collect_column_issues(
+    expression: exp.Expression, alias_map: Dict[str, str], catalog: Dict[str, Dict[str, Any]]
+) -> list[str]:
+    """Check that referenced columns belong to authorised tables."""
+
+    issues: list[str] = []
+    for column_expr in expression.find_all(exp.Column):
+        column_name = normalize_identifier(column_expr.name)
+        if not column_name or column_name == "*":
+            continue
+        table_reference = normalize_identifier(column_expr.table)
+        if not table_reference:
+            continue
+        canonical_table = alias_map.get(table_reference, table_reference)
+        entry = catalog.get(canonical_table)
+        if not entry:
+            continue
+        allowed_columns = entry.get("columns") or set()
+        if allowed_columns and column_name not in allowed_columns:
+            issues.append(
+                f"La columna '{column_expr.name}' no está permitida en la tabla '{entry['name']}'."
+            )
+    return issues
+
+
+def is_select_statement(expression: exp.Expression) -> bool:
+    """Determine whether the parsed expression represents a read-only SELECT."""
+
+    if isinstance(expression, exp.Select):
+        return True
+    if isinstance(expression, exp.With):
+        return is_select_statement(expression.this)
+    if isinstance(expression, exp.Subquery):
+        return is_select_statement(expression.this)
+    if isinstance(expression, exp.Limit):
+        return is_select_statement(expression.this)
+    if isinstance(expression, exp.Union):
+        return True
+    return expression.find(exp.Select) is not None
+
+
 def build_metadata_catalog(metadata: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Create a lookup dictionary for tables and their columns."""
 
     catalog: Dict[str, Dict[str, Any]] = {}
     for table_key, table_data in metadata.items():
-        if isinstance(table_data, dict) and table_key in table_data:
-            info = table_data.get(table_key, {})
-        else:
-            info = table_data
+        info = table_data.get(table_key) if isinstance(table_data, dict) else table_data
         if not isinstance(info, dict):
             continue
+
         columns = info.get("columns") or info.get("columnas")
         if isinstance(columns, dict):
-            column_names = {col.lower() for col in columns.keys()}
+            column_names = {normalize_identifier(col) for col in columns.keys()}
         else:
             column_names = set()
+
         path = info.get("path") or info.get("tabla")
-        canonical = table_key.lower()
+        canonical = normalize_identifier(table_key)
+
+        aliases = {canonical}
+        if isinstance(path, str):
+            normalized_path = normalize_identifier(path)
+            if normalized_path:
+                aliases.add(normalized_path)
+                path_parts = normalized_path.split(".")
+                if path_parts:
+                    aliases.add(path_parts[-1])
+                if len(path_parts) >= 2:
+                    aliases.add(".".join(path_parts[-2:]))
+
         entry = {
             "name": canonical,
-            "path": str(path).lower() if isinstance(path, str) else None,
             "columns": column_names,
+            "aliases": aliases,
         }
-        catalog[canonical] = entry
-        if entry["path"]:
-            catalog[entry["path"]] = entry
-            dataset_table = entry["path"].split(".")[-1]
-            catalog[dataset_table] = entry
+
+        for alias in aliases:
+            catalog[alias] = entry
+
     return catalog
-
-
-def extract_tables(statement: sqlparse.sql.Statement) -> list[str]:
-    """Extract table identifiers from a SQL statement."""
-
-    tables: list[str] = []
-    for token in statement.tokens:
-        if token.is_group:
-            tables.extend(extract_tables(token))
-        if token.ttype is Keyword and token.value.upper() in {"FROM", "JOIN"}:
-            _, next_token = statement.token_next(statement.token_index(token))
-            if isinstance(next_token, IdentifierList):
-                for identifier in next_token.get_identifiers():
-                    tables.append(identifier.value)
-            elif isinstance(next_token, Identifier):
-                tables.append(next_token.value)
-    return tables
-
-
-def resolve_table(raw_identifier: str, catalog: Dict[str, Dict[str, Any]]) -> Dict[str, Any] | None:
-    """Resolve a raw table identifier against the metadata catalog."""
-
-    cleaned = raw_identifier.replace("`", "").strip()
-    alias = None
-    parts = re.split(r"\s+", cleaned, maxsplit=2)
-    table_name = parts[0]
-    if len(parts) >= 3 and parts[1].lower() == "as":
-        alias = parts[2].split()[0].lower()
-    elif len(parts) >= 2:
-        alias = parts[1].lower()
-    normalized = table_name.lower()
-    entry = catalog.get(normalized)
-    if entry is None and "." in normalized:
-        entry = catalog.get(normalized.split(".")[-1])
-    if entry is None:
-        return None
-    resolved = dict(entry)
-    resolved["alias"] = alias
-    return resolved
-
-
-def validate_columns(
-    sql: str,
-    alias_map: Dict[str, str],
-    catalog: Dict[str, Dict[str, Any]],
-) -> list[str]:
-    """Check that referenced columns belong to authorised tables."""
-
-    issues: list[str] = []
-    pattern = re.compile(r"\b([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\b")
-    for alias, column in pattern.findall(sql):
-        alias_norm = alias.lower()
-        column_norm = column.lower()
-        lookup_key = alias_map.get(alias_norm, alias_norm)
-        entry = catalog.get(lookup_key)
-        if not entry:
-            continue
-        columns = entry.get("columns") or set()
-        if columns and column_norm not in columns:
-            issues.append(
-                f"La columna '{column}' no está permitida en la tabla '{entry['name']}'."
-            )
-    return issues
 
 
 def log_sql_audit(audit_path: Path, entry: Dict[str, Any]) -> None:
