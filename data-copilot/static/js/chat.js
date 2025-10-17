@@ -78,6 +78,80 @@
     }
   }
 
+  function escapeHTML(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderMarkdown(content) {
+    if (!content) {
+      return '';
+    }
+
+    const text = String(content);
+
+    if (typeof marked !== 'undefined') {
+      const html = typeof marked.parse === 'function' ? marked.parse(text) : marked(text);
+      if (typeof DOMPurify !== 'undefined') {
+        return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+      }
+      return html;
+    }
+
+    // Fallback: escape HTML and convert new lines to <br>
+    return escapeHTML(text).replace(/\n/g, '<br>');
+  }
+
+  function createChartTable(chart) {
+    if (
+      !chart ||
+      !Array.isArray(chart.labels) ||
+      !Array.isArray(chart.values) ||
+      chart.labels.length !== chart.values.length
+    ) {
+      return null;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'chart-data-table';
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+
+    const labelHeader = document.createElement('th');
+    labelHeader.textContent = chart.labelHeader || 'Categoría';
+    headRow.appendChild(labelHeader);
+
+    const valueHeader = document.createElement('th');
+    valueHeader.textContent = chart.valueHeader || 'Valor';
+    headRow.appendChild(valueHeader);
+
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    chart.labels.forEach((label, index) => {
+      const row = document.createElement('tr');
+      const labelCell = document.createElement('td');
+      labelCell.textContent = label;
+      row.appendChild(labelCell);
+
+      const valueCell = document.createElement('td');
+      valueCell.textContent = chart.values[index];
+      row.appendChild(valueCell);
+
+      tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+
+    return table;
+  }
+
   function renderMessages(conversation) {
     Object.keys(chartInstances).forEach((chartId) => destroyChart(chartId));
     messagesContainer.innerHTML = '';
@@ -107,7 +181,17 @@
 
         bubble.appendChild(indicator);
       } else {
-        bubble.textContent = message.content;
+        const contentWrapper = document.createElement('div');
+        contentWrapper.className = 'message-content';
+
+        if (message.role === 'assistant') {
+          contentWrapper.innerHTML = renderMarkdown(message.content);
+        } else {
+          contentWrapper.classList.add('plain-text');
+          contentWrapper.textContent = message.content || '';
+        }
+
+        bubble.appendChild(contentWrapper);
       }
 
       if (
@@ -158,6 +242,11 @@
             },
           });
         });
+
+        const table = createChartTable(message.chart);
+        if (table) {
+          bubble.appendChild(table);
+        }
       }
       messagesContainer.appendChild(bubble);
     });
