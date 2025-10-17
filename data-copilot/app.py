@@ -113,16 +113,32 @@ def send_message():
         assistant_reply = f"{exc.__class__.__name__}: {exc}"
 
     chart_payload = orchestration.chart if orchestration else None
+    response_payload: Dict[str, object] = {"response": assistant_reply}
+    if chart_payload:
+        response_payload["chart"] = chart_payload
+    assistant_metadata: Optional[Dict[str, object]] = None
+    if orchestration:
+        assistant_metadata = {
+            "flow_trace": orchestration.flow_trace,
+            "total_tokens": orchestration.total_tokens,
+            "total_latency_ms": orchestration.total_latency_ms,
+        }
+        if orchestration.total_cost_usd is not None:
+            assistant_metadata["total_cost_usd"] = orchestration.total_cost_usd
+    extra_fields: Dict[str, object] = {}
+    if chart_payload:
+        extra_fields["chart"] = chart_payload
+    if assistant_metadata:
+        extra_fields["metadata"] = assistant_metadata
     conversation = conversation_service.append_message(
         username,
         conv_id,
         "assistant",
         assistant_reply,
-        extra={"chart": chart_payload} if chart_payload else None,
+        extra=extra_fields or None,
     )
-    response_payload: Dict[str, object] = {"response": assistant_reply}
-    if chart_payload:
-        response_payload["chart"] = chart_payload
+    if not conversation:
+        return jsonify({"error": "conversation_not_found"}), 404
     if conversation:
         response_payload["conversation"] = conversation.to_dict()
     if orchestration:
@@ -134,8 +150,28 @@ def send_message():
             "sql_output": orchestration.sql_output,
             "validation": orchestration.validation_output,
             "analysis": orchestration.analyzer_output,
+            "trace": {
+                "flow_trace": orchestration.flow_trace,
+                "total_tokens": orchestration.total_tokens,
+                "total_latency_ms": orchestration.total_latency_ms,
+                "total_cost_usd": orchestration.total_cost_usd,
+            },
         }
     return jsonify(response_payload)
+
+
+@app.route("/traces/<conv_id>")
+@login_required
+def view_traces(conv_id: str):
+    username = session["username"]
+    conversation = conversation_service.load_conversation(username, conv_id)
+    status_code = 200 if conversation else 404
+    payload = conversation.to_dict() if conversation else None
+    return render_template(
+        "trace_viewer.html",
+        conversation=payload,
+        conv_id=conv_id,
+    ), status_code
 
 
 @app.route("/delete_chat/<conv_id>", methods=["DELETE"])

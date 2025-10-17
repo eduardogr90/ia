@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -15,16 +15,31 @@ class Conversation:
     """Representation of a single chat conversation."""
 
     id: str
-    messages: List[Dict[str, str]]
+    messages: List[Dict[str, object]]
+    title: str
+    created_at: str
 
     @classmethod
     def from_file(cls, path: Path) -> "Conversation":
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return cls(id=data.get("id", path.stem), messages=data.get("messages", []))
+        messages = data.get("messages", [])
+        if not isinstance(messages, list):
+            messages = []
+        return cls(
+            id=data.get("id", path.stem),
+            messages=messages,
+            title=data.get("title") or data.get("conversation_title") or data.get("id", path.stem),
+            created_at=data.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        )
 
     def to_dict(self) -> Dict[str, object]:
-        return {"id": self.id, "messages": self.messages}
+        return {
+            "id": self.id,
+            "title": self.title,
+            "created_at": self.created_at,
+            "messages": self.messages,
+        }
 
 
 class ConversationService:
@@ -63,7 +78,13 @@ class ConversationService:
         while self._conversation_path(username, conv_id).exists():
             conv_id = f"{base_id}_{counter}"
             counter += 1
-        conversation = Conversation(id=conv_id, messages=[])
+        created_at = datetime.now(timezone.utc).isoformat()
+        conversation = Conversation(
+            id=conv_id,
+            messages=[],
+            title=f"Conversación {conv_id}",
+            created_at=created_at,
+        )
         self._save_conversation(username, conversation)
         return conversation
 
@@ -88,10 +109,21 @@ class ConversationService:
         conversation = self.load_conversation(username, conv_id)
         if not conversation:
             return None
-        message = {"role": role, "content": content}
+        timestamp = datetime.now(timezone.utc).isoformat()
+        message: Dict[str, object] = {
+            "role": role,
+            "content": content,
+            "timestamp": timestamp,
+        }
         if extra:
             message.update(extra)
         conversation.messages.append(message)
+        if role == "user":
+            preview = content.strip()
+            if preview:
+                truncated = (preview[:77] + "…") if len(preview) > 78 else preview
+                if conversation.title.startswith("Conversación") or not conversation.title.strip():
+                    conversation.title = truncated
         self._save_conversation(username, conversation)
         return conversation
 

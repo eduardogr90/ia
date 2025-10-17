@@ -60,7 +60,8 @@
       /* Botones */
       .sidebar button,
       .logout-wrapper button,
-      form#message-form button {
+      form#message-form button,
+      .chat-header-actions button {
         border: none;
         border-radius: 8px; /* más cuadrado */
         background: var(--primary);
@@ -74,7 +75,8 @@
 
       .sidebar button:hover,
       .logout-wrapper button:hover,
-      form#message-form button:hover {
+      form#message-form button:hover,
+      .chat-header-actions button:hover:not(:disabled) {
         background: var(--primary-dark);
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -198,6 +200,22 @@
       .chat-header span {
         font-size: 0.85rem;
         color: rgba(0, 0, 0, 0.55);
+      }
+
+      .chat-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      #view-traces {
+        padding: 0.45rem 1rem;
+        font-size: 0.85rem;
+      }
+
+      #view-traces:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
 
       /* Mensajes */
@@ -386,7 +404,10 @@
     <main class="chat-area">
       <div class="chat-header">
         <h2 id="chat-title">Selecciona una conversación</h2>
-        <span id="chat-status"></span>
+        <div class="chat-header-actions">
+          <span id="chat-status"></span>
+          <button id="view-traces" type="button" disabled>Ver trazas</button>
+        </div>
       </div>
       <div class="messages" id="messages">
         <div class="empty-state" id="empty-state">

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Data Copilot · Trazas de conversación</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        --bg: #f5f7fa;
+        --card-bg: #ffffff;
+        --border: rgba(0, 0, 0, 0.08);
+        --text: #1e293b;
+        --muted: #64748b;
+        --accent: #6ac0ab;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        padding: 24px;
+      }
+
+      header {
+        max-width: 1100px;
+        margin: 0 auto 16px auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 1rem;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 600;
+      }
+
+      header .conversation-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+      }
+
+      .card h2 {
+        margin-top: 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.75rem;
+        font-size: 0.9rem;
+      }
+
+      table th,
+      table td {
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      table thead {
+        background: #eef7f4;
+      }
+
+      .message-card {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-top: 1rem;
+        background: rgba(255, 255, 255, 0.9);
+      }
+
+      .message-card header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        align-items: baseline;
+        margin-bottom: 0.5rem;
+      }
+
+      .message-card header h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+      }
+
+      .message-card header span {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .message-content {
+        white-space: pre-wrap;
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+
+      details {
+        margin-top: 0.75rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        background: rgba(240, 249, 245, 0.6);
+      }
+
+      details[open] {
+        background: rgba(240, 249, 245, 0.9);
+      }
+
+      details summary {
+        font-weight: 600;
+        cursor: pointer;
+        outline: none;
+      }
+
+      pre {
+        background: rgba(15, 23, 42, 0.04);
+        border-radius: 6px;
+        padding: 0.75rem;
+        overflow-x: auto;
+        font-size: 0.85rem;
+      }
+
+      .empty-state {
+        text-align: center;
+        color: var(--muted);
+        font-size: 1rem;
+        padding: 2rem;
+      }
+
+      .metadata-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.75rem;
+        margin-top: 0.75rem;
+      }
+
+      .metadata-tile {
+        background: rgba(106, 192, 171, 0.12);
+        border: 1px solid rgba(106, 192, 171, 0.25);
+        border-radius: 8px;
+        padding: 0.75rem;
+      }
+
+      .metadata-tile span {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .metadata-tile strong {
+        display: block;
+        margin-top: 0.35rem;
+        font-size: 1rem;
+      }
+
+      .detail-block {
+        margin-top: 0.5rem;
+      }
+
+      .detail-block h4 {
+        margin: 0.5rem 0 0.35rem;
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 768px) {
+        body {
+          padding: 16px;
+        }
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    {% if conversation %}
+    <header>
+      <h1>Trazabilidad de la conversación</h1>
+      <div class="conversation-meta">
+        <span><strong>ID:</strong> {{ conversation.id }}</span>
+        <span><strong>Título:</strong> {{ conversation.title }}</span>
+        <span><strong>Creada:</strong> {{ conversation.created_at }}</span>
+      </div>
+    </header>
+    <main>
+      <section class="card">
+        <h2>Resumen general</h2>
+        <div class="metadata-grid" id="conversation-summary"></div>
+      </section>
+      <section class="card">
+        <h2>Mensajes y trazas</h2>
+        <div id="messages"></div>
+      </section>
+    </main>
+    <script>
+      const CONVERSATION_DATA = {{ conversation | tojson }};
+
+      function formatValue(value) {
+        if (value === null || value === undefined) {
+          return '—';
+        }
+        if (typeof value === 'string') {
+          return value;
+        }
+        return JSON.stringify(value, null, 2);
+      }
+
+      function createMetadataTile(label, value) {
+        const tile = document.createElement('div');
+        tile.className = 'metadata-tile';
+        const span = document.createElement('span');
+        span.textContent = label;
+        const strong = document.createElement('strong');
+        strong.textContent = value;
+        tile.appendChild(span);
+        tile.appendChild(strong);
+        return tile;
+      }
+
+      function buildFlowTraceTable(trace) {
+        if (!Array.isArray(trace) || !trace.length) {
+          return null;
+        }
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['#', 'Agente', 'Latencia (ms)', 'Tokens totales', 'Tokens prompt', 'Tokens respuesta', 'Coste (USD)', 'Timestamp', 'Detalles'].forEach((label) => {
+          const th = document.createElement('th');
+          th.textContent = label;
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+
+        trace.forEach((step, index) => {
+          const row = document.createElement('tr');
+
+          const stepCell = document.createElement('td');
+          stepCell.textContent = String(index + 1);
+          row.appendChild(stepCell);
+
+          const agentCell = document.createElement('td');
+          agentCell.textContent = step.agent || '—';
+          row.appendChild(agentCell);
+
+          const latencyCell = document.createElement('td');
+          latencyCell.textContent = step.latency_ms != null ? step.latency_ms : '—';
+          row.appendChild(latencyCell);
+
+          const tokensTotal = step.tokens?.total ?? '—';
+          const tokensPrompt = step.tokens?.prompt ?? '—';
+          const tokensCompletion = step.tokens?.completion ?? '—';
+
+          const totalCell = document.createElement('td');
+          totalCell.textContent = tokensTotal;
+          row.appendChild(totalCell);
+
+          const promptCell = document.createElement('td');
+          promptCell.textContent = tokensPrompt;
+          row.appendChild(promptCell);
+
+          const completionCell = document.createElement('td');
+          completionCell.textContent = tokensCompletion;
+          row.appendChild(completionCell);
+
+          const costCell = document.createElement('td');
+          costCell.textContent = step.cost_usd != null ? step.cost_usd : '—';
+          row.appendChild(costCell);
+
+          const timestampCell = document.createElement('td');
+          timestampCell.textContent = step.timestamp || '—';
+          row.appendChild(timestampCell);
+
+          const detailCell = document.createElement('td');
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          summary.textContent = 'Ver detalles';
+          details.appendChild(summary);
+
+          const detailBlock = document.createElement('div');
+          detailBlock.className = 'detail-block';
+
+          const detailPairs = [
+            ['Entrada', step.input ?? step.input_sql ?? step.input_rows],
+            ['Prompt enviado', step.prompt_sent],
+            ['Respuesta del modelo', step.llm_response],
+            ['Resultado de validación', step.validation_result],
+            ['Filas devueltas', step.rows_returned],
+            ['Error', step.error],
+          ];
+
+          detailPairs.forEach(([label, value]) => {
+            if (value === undefined || value === null || value === '') {
+              return;
+            }
+            const heading = document.createElement('h4');
+            heading.textContent = label;
+            detailBlock.appendChild(heading);
+            const pre = document.createElement('pre');
+            pre.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+            detailBlock.appendChild(pre);
+          });
+
+          const extraKeys = Object.keys(step).filter((key) => !['agent', 'latency_ms', 'tokens', 'cost_usd', 'timestamp', 'input', 'input_sql', 'input_rows', 'prompt_sent', 'llm_response', 'validation_result', 'rows_returned', 'error'].includes(key));
+          extraKeys.forEach((key) => {
+            const heading = document.createElement('h4');
+            heading.textContent = key;
+            detailBlock.appendChild(heading);
+            const pre = document.createElement('pre');
+            pre.textContent = formatValue(step[key]);
+            detailBlock.appendChild(pre);
+          });
+
+          if (!detailBlock.childNodes.length) {
+            const paragraph = document.createElement('p');
+            paragraph.textContent = 'Sin información adicional.';
+            detailBlock.appendChild(paragraph);
+          }
+
+          details.appendChild(detailBlock);
+          detailCell.appendChild(details);
+          row.appendChild(detailCell);
+
+          tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        return table;
+      }
+
+      function renderConversationSummary(data) {
+        const container = document.getElementById('conversation-summary');
+        if (!container) {
+          return;
+        }
+        container.innerHTML = '';
+        const totalMessages = Array.isArray(data.messages) ? data.messages.length : 0;
+        container.appendChild(createMetadataTile('Mensajes', totalMessages));
+
+        const assistants = (data.messages || []).filter((msg) => msg.role === 'assistant' && msg.metadata);
+        const aggregate = assistants.reduce(
+          (acc, message) => {
+            const meta = message.metadata || {};
+            acc.tokens += meta.total_tokens || 0;
+            acc.latency += meta.total_latency_ms || 0;
+            if (typeof meta.total_cost_usd === 'number') {
+              acc.cost += meta.total_cost_usd;
+              acc.hasCost = true;
+            }
+            return acc;
+          },
+          { tokens: 0, latency: 0, cost: 0, hasCost: false },
+        );
+
+        container.appendChild(createMetadataTile('Tokens totales (asistente)', aggregate.tokens));
+        container.appendChild(createMetadataTile('Latencia acumulada (ms)', aggregate.latency.toFixed(2)));
+        container.appendChild(
+          createMetadataTile(
+            'Coste estimado (USD)',
+            aggregate.hasCost ? aggregate.cost.toFixed(6) : 'Sin datos',
+          ),
+        );
+      }
+
+      function renderMessages(data) {
+        const container = document.getElementById('messages');
+        if (!container) {
+          return;
+        }
+        container.innerHTML = '';
+        if (!Array.isArray(data.messages) || !data.messages.length) {
+          const empty = document.createElement('div');
+          empty.className = 'empty-state';
+          empty.textContent = 'La conversación no tiene mensajes registrados.';
+          container.appendChild(empty);
+          return;
+        }
+
+        data.messages.forEach((message, index) => {
+          const card = document.createElement('div');
+          card.className = 'message-card';
+
+          const header = document.createElement('header');
+          const title = document.createElement('h3');
+          title.textContent = `${index + 1}. ${message.role === 'assistant' ? 'Asistente' : 'Usuario'}`;
+          header.appendChild(title);
+
+          const timestamp = document.createElement('span');
+          timestamp.textContent = message.timestamp || 'Sin timestamp';
+          header.appendChild(timestamp);
+          card.appendChild(header);
+
+          const contentBlock = document.createElement('div');
+          contentBlock.className = 'message-content';
+          contentBlock.textContent = message.content || '';
+          card.appendChild(contentBlock);
+
+          if (message.metadata) {
+            const metadataDetails = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = 'Ver trazas técnicas';
+            metadataDetails.appendChild(summary);
+
+            const metadataWrapper = document.createElement('div');
+            metadataWrapper.className = 'detail-block';
+
+            const metaTiles = document.createElement('div');
+            metaTiles.className = 'metadata-grid';
+            const tokenMetric =
+              typeof message.metadata.total_tokens === 'number'
+                ? message.metadata.total_tokens
+                : message.metadata.total_tokens || 0;
+            metaTiles.appendChild(createMetadataTile('Tokens totales', tokenMetric));
+
+            const latencyMetric =
+              typeof message.metadata.total_latency_ms === 'number'
+                ? message.metadata.total_latency_ms.toFixed(2)
+                : message.metadata.total_latency_ms || '—';
+            metaTiles.appendChild(
+              createMetadataTile('Latencia total (ms)', latencyMetric),
+            );
+            if (typeof message.metadata.total_cost_usd === 'number') {
+              metaTiles.appendChild(
+                createMetadataTile(
+                  'Coste total (USD)',
+                  message.metadata.total_cost_usd.toFixed(6),
+                ),
+              );
+            }
+            metadataWrapper.appendChild(metaTiles);
+
+            const flowTraceTable = buildFlowTraceTable(message.metadata.flow_trace);
+            if (flowTraceTable) {
+              metadataWrapper.appendChild(flowTraceTable);
+            }
+
+            metadataDetails.appendChild(metadataWrapper);
+            card.appendChild(metadataDetails);
+          }
+
+          container.appendChild(card);
+        });
+      }
+
+      renderConversationSummary(CONVERSATION_DATA);
+      renderMessages(CONVERSATION_DATA);
+    </script>
+    {% else %}
+    <div class="empty-state">
+      <p>No se encontró la conversación solicitada ({{ conv_id }}).</p>
+    </div>
+    {% endif %}
+  </body>
+</html>
