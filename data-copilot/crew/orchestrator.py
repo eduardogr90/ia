@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,9 +167,7 @@ class CrewOrchestrator:
                 "No se pudo inicializar el modelo Gemini.",
                 detail=str(exc),
             ) from exc
-        self.interpreter_agent = create_interpreter_agent(
-            self.history_tool, llm=self._llm
-        )
+        self.interpreter_agent = create_interpreter_agent(llm=self._llm)
         self.sql_agent = create_sql_generator_agent(self.metadata_tool, llm=self._llm)
         self.executor_agent = create_executor_agent(self.bigquery_tool, llm=self._llm)
         self.validator_agent = create_validator_agent(
@@ -192,6 +191,135 @@ class CrewOrchestrator:
             content = item.get("content", "")
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
+
+    def _normalize_text(self, text: str | None) -> str:
+        if not text:
+            return ""
+        normalized = unicodedata.normalize("NFD", text)
+        without_marks = "".join(
+            char for char in normalized if unicodedata.category(char) != "Mn"
+        )
+        return without_marks.lower()
+
+    def _analyze_question_semantics(self, question: str) -> Dict[str, object]:
+        normalized = self._normalize_text(question)
+        is_comparative = any(
+            keyword in normalized
+            for keyword in (
+                " vs ",
+                "vs.",
+                "compar",
+                "diferenc",
+                "respecto",
+                "frente a",
+                "variac",
+                "evolu",
+                "tendenc",
+                "increment",
+                "disminu",
+            )
+        )
+        wants_visual = any(
+            keyword in normalized
+            for keyword in ("graf", "visualiz", "chart", "diagrama")
+        )
+
+        iteration_patterns = (
+            "por mes",
+            "por trimestre",
+            "por ano",
+            "por año",
+            "por semana",
+            "por dia",
+            "por día",
+            "mes a mes",
+            "trimestre a trimestre",
+            "semana a semana",
+            "dia a dia",
+            "día a día",
+            "mensualmente",
+            "trimestralmente",
+            "semanalmente",
+            "diariamente",
+        )
+        has_iteration = any(pattern in normalized for pattern in iteration_patterns)
+
+        month_names = (
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "setiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
+        )
+
+        period_candidates: List[str] = []
+        if not is_comparative and not has_iteration:
+            if any(name in normalized for name in month_names) or any(
+                keyword in normalized
+                for keyword in (
+                    " del mes ",
+                    "en el mes ",
+                    "durante el mes",
+                    "ultimo mes",
+                    "último mes",
+                    "mes pasado",
+                )
+            ):
+                period_candidates.append("monthly")
+            if "trimestre" in normalized or "trimestr" in normalized:
+                period_candidates.append("quarterly")
+            if any(
+                keyword in normalized
+                for keyword in (
+                    " ano ",
+                    " año ",
+                    " anual",
+                    "durante 20",
+                    "en 20",
+                    "del 20",
+                )
+            ):
+                period_candidates.append("yearly")
+
+        breakdown_blockers = {
+            "monthly": ("semana", "semanal", "dia", "día", "diario"),
+            "quarterly": ("mes", "mensual", "semana", "semanal"),
+            "yearly": ("mes", "mensual", "trimestre", "trimestr", "semana", "semanal"),
+        }
+
+        aggregated_period = None
+        for candidate in period_candidates:
+            blockers = breakdown_blockers.get(candidate, ())
+            if any(blocker in normalized for blocker in blockers):
+                continue
+            aggregated_period = candidate
+            break
+
+        period_labels = {
+            "monthly": ("mensual", "semanal"),
+            "quarterly": ("trimestral", "mensual"),
+            "yearly": ("anual", "trimestral"),
+        }
+        aggregated_label, breakdown_unit = (None, None)
+        if aggregated_period:
+            aggregated_label, breakdown_unit = period_labels.get(aggregated_period, (None, None))
+
+        return {
+            "normalized": normalized,
+            "is_comparative": is_comparative,
+            "wants_visual": wants_visual,
+            "aggregated_period": aggregated_period,
+            "aggregated_label": aggregated_label,
+            "breakdown_unit": breakdown_unit,
+        }
 
     def _run_task(
         self,
@@ -311,35 +439,79 @@ class CrewOrchestrator:
                     return {"raw": payload.strip()}
             return {"raw": payload.strip()}
 
-    def _build_interpreter_prompt(self, user_message: str, history_text: str) -> str:
-        return (
-            "Analiza la intención del usuario y determina si requiere una consulta SQL, usando el historial de conversación."
-            "Historial:\n"
-            f"{history_text or '(sin historial previo)'}\n\n"
-            f"Mensaje actual: {user_message}\n\n"
-            "Responde exclusivamente en JSON con las claves: \n"
-            "- requires_sql: true o false\n"
-            "- reasoning: explicación corta\n"
-            "- refined_question: reformulación clara de la solicitud\n"
-        )
+    def _build_interpreter_prompt(
+        self, user_message: str, history_text: str, has_history: bool
+    ) -> str:
+        base = [
+            "Analiza la intención del usuario y determina si requiere una consulta SQL.",
+        ]
+        if has_history:
+            base.append(
+                "Utiliza el historial proporcionado solo cuando aporte contexto relevante y no hagas suposiciones ajenas a él."
+            )
+            base.append("Historial:")
+            base.append(history_text)
+        else:
+            base.append(
+                "Trabaja únicamente con el mensaje actual; no menciones ni supongas mensajes anteriores."
+            )
+        base.append("")
+        base.append(f"Mensaje actual: {user_message}")
+        base.append("")
+        base.append("Responde exclusivamente en JSON con las claves:")
+        base.append("- requires_sql: true o false")
+        base.append("- reasoning: explicación corta")
+        base.append("- refined_question: reformulación clara de la solicitud")
+        return "\n".join(base)
 
     def _build_sql_prompt(
         self,
         refined_question: str,
         metadata_summary: str,
         interpreter_data: Dict[str, object],
+        semantics: Dict[str, object],
     ) -> str:
-        return (
-            "Genera una consulta SQL siguiendo el BigQuery Standard SQL. que responda la pregunta."\
-            " Utiliza solo tablas y columnas disponibles en los metadatos.\n\n"
-            f"Pregunta refinada: {refined_question}\n"
-            f"Contexto adicional: {interpreter_data.get('reasoning', '')}\n\n"
-            "Metadatos disponibles:\n"
-            f"{metadata_summary}\n\n"
-            "Responde en JSON con las claves:\n"
-            "- sql: cadena con la consulta o null si no es necesaria\n"
-            "- analysis: explicación breve de la estrategia\n"
+        base = [
+            "Genera una consulta SQL siguiendo el BigQuery Standard SQL que responda la pregunta.",
+            "Utiliza solo tablas y columnas disponibles en los metadatos y respeta todos los filtros implícitos en la solicitud.",
+            f"Pregunta refinada: {refined_question}",
+            f"Contexto adicional: {interpreter_data.get('reasoning', '')}",
+            "",
+            "Metadatos disponibles:",
+            metadata_summary,
+            "",
+        ]
+
+        if semantics.get("is_comparative"):
+            base.append(
+                "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario y no añadas desgloses adicionales."
+            )
+        elif semantics.get("aggregated_period"):
+            period_label = semantics.get("aggregated_label") or "solicitado"
+            breakdown_unit = semantics.get("breakdown_unit") or "más pequeño"
+            base.append(
+                "La solicitud pide un agregado "
+                f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit} "
+                "del mismo periodo solo con fines analíticos."
+            )
+            base.append(
+                "Puedes usar CTEs, UNION ALL o GROUPING SETS para entregar ambos niveles en un mismo resultado, identificando cada fila con una columna que indique el nivel de agregación (por ejemplo, nivel_agregacion)."
+            )
+            base.append(
+                "No alteres la métrica original ni cambies los filtros solicitados. Si el desglose adicional no es viable con los metadatos disponibles, indícalo con claridad en analysis."
+            )
+        else:
+            base.append(
+                "Respeta la granularidad mencionada por el usuario y evita añadir niveles temporales no pedidos."
+            )
+
+        base.append("")
+        base.append("Responde en JSON con las claves:")
+        base.append("- sql: cadena con la consulta o null si no es necesaria")
+        base.append(
+            "- analysis: explicación breve de la estrategia e indica cualquier decisión sobre granularidad"
         )
+        return "\n".join(base)
 
     def _build_executor_prompt(
         self,
@@ -389,24 +561,47 @@ class CrewOrchestrator:
         refined_question: str,
         sql: str | None,
         rows: List[Dict[str, object]] | None,
+        semantics: Dict[str, object],
     ) -> str:
         base = [
-            "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta."
-            "Si solo hay uno o pocos valores, responde de forma breve y directa."
-            "Sé preciso, conciso y basado únicamente en los resultados mostrados"
-            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo",
-            f"Pregunta a resolver: {refined_question}",
+            "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
+            "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
+            "Si solo hay un valor disponible, limita la respuesta a una frase directa y concreta.",
+            "Sé preciso, conciso y basa tus conclusiones únicamente en los resultados mostrados.",
+            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo.",
         ]
+        if semantics.get("is_comparative"):
+            base.append(
+                "La solicitud es comparativa o evolutiva; responde siguiendo esa estructura y evita agregar desgloses extra."
+            )
+        elif semantics.get("aggregated_period"):
+            period_label = semantics.get("aggregated_label") or "principal"
+            breakdown_unit = semantics.get("breakdown_unit") or "secundario"
+            base.append(
+                "Presenta el total "
+                f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit}."
+            )
+        base.append(
+            "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
+        )
+        if semantics.get("wants_visual"):
+            base.append(
+                "El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
+            )
+        else:
+            base.append(
+                "El usuario no pidió gráficos; mantén chart en null y no propongas visualizaciones."
+            )
         if sql:
             base.append("Consulta SQL ejecutada:")
             base.append(f"```sql\n{sql}\n```")
         base.append(
-            f"Cantidad de filas disponibles: {len(rows) if rows else 0}."
-            " Usa el tool para obtener la respuesta final."
+            f"Cantidad de filas disponibles: {len(rows) if rows else 0}. Usa el tool para obtener la respuesta final."
         )
         base.append(
             "El resultado final debe ser JSON con las claves text y chart (esta última puede ser null)."
         )
+        base.append(f"Pregunta a resolver: {refined_question}")
         return "\n\n".join(base)
 
     # ------------------------------------------------------------------
@@ -488,12 +683,22 @@ class CrewOrchestrator:
                 )
 
             history_text = self._format_history(history)
-            self.history_tool.set_history(history_text)
+            has_history = bool(history_text.strip())
+            if has_history:
+                self.history_tool.set_history(history_text)
+                if hasattr(self.interpreter_agent, "tools"):
+                    self.interpreter_agent.tools = [self.history_tool]
+            else:
+                self.history_tool.set_history("")
+                if hasattr(self.interpreter_agent, "tools"):
+                    self.interpreter_agent.tools = []
             self.metadata_tool.set_metadata(self.metadata)
             self.bigquery_tool.reset()
             self.validation_tool.set_metadata(self.metadata)
 
-            interpreter_prompt = self._build_interpreter_prompt(user_message, history_text)
+            interpreter_prompt = self._build_interpreter_prompt(
+                user_message, history_text, has_history
+            )
             interpreter_task = Task(
                 description=interpreter_prompt,
                 agent=self.interpreter_agent,
@@ -510,13 +715,18 @@ class CrewOrchestrator:
             requires_sql = bool(interpreter_data.get("requires_sql", False))
             refined_question = interpreter_data.get("refined_question") or user_message
 
+            question_semantics = self._analyze_question_semantics(refined_question)
+
             sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
             validation_data: Dict[str, object] = {}
             analyzer_output: Dict[str, object] = {}
             if requires_sql:
                 metadata_summary = self.metadata_tool.summary()
                 sql_prompt = self._build_sql_prompt(
-                    refined_question, metadata_summary, interpreter_data
+                    refined_question,
+                    metadata_summary,
+                    interpreter_data,
+                    question_semantics,
                 )
                 sql_task = Task(
                     description=sql_prompt,
@@ -643,6 +853,7 @@ class CrewOrchestrator:
                     refined_question,
                     sanitized_sql,
                     rows or [],
+                    question_semantics,
                 )
                 analyzer_task = Task(
                     description=analyzer_prompt,
