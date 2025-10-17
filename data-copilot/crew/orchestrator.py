@@ -439,6 +439,48 @@ class CrewOrchestrator:
                     return {"raw": payload.strip()}
             return {"raw": payload.strip()}
 
+    def _coerce_bool(self, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized in {"true", "1", "si", "sí", "yes"}
+        if isinstance(value, (int, float)):
+            return value != 0
+        return False
+
+    def _extract_semantics(self, interpreter_data: Dict[str, object]) -> Dict[str, object]:
+        semantics: Dict[str, object] = {}
+        raw_semantics = interpreter_data.get("semantics")
+        if isinstance(raw_semantics, dict):
+            semantics.update(raw_semantics)
+
+        for key in (
+            "is_comparative",
+            "aggregated_period",
+            "aggregated_label",
+            "breakdown_unit",
+            "wants_visual",
+        ):
+            if key not in semantics and key in interpreter_data:
+                semantics[key] = interpreter_data[key]
+
+        semantics["is_comparative"] = self._coerce_bool(
+            semantics.get("is_comparative")
+        )
+        semantics["wants_visual"] = self._coerce_bool(semantics.get("wants_visual"))
+        semantics["aggregated_period"] = (
+            semantics.get("aggregated_period") if isinstance(semantics.get("aggregated_period"), str) else None
+        )
+        semantics["aggregated_label"] = (
+            semantics.get("aggregated_label") if isinstance(semantics.get("aggregated_label"), str) else None
+        )
+        semantics["breakdown_unit"] = (
+            semantics.get("breakdown_unit") if isinstance(semantics.get("breakdown_unit"), str) else None
+        )
+
+        return semantics
+
     def _build_interpreter_prompt(
         self, user_message: str, history_text: str, has_history: bool
     ) -> str:
@@ -462,6 +504,9 @@ class CrewOrchestrator:
         base.append("- requires_sql: true o false")
         base.append("- reasoning: explicación corta")
         base.append("- refined_question: reformulación clara de la solicitud")
+        base.append(
+            "- semantics: objeto con is_comparative (bool), wants_visual (bool), aggregated_period (string o null), aggregated_label (string o null) y breakdown_unit (string o null)"
+        )
         return "\n".join(base)
 
     def _build_sql_prompt(
@@ -482,16 +527,21 @@ class CrewOrchestrator:
             "",
         ]
 
-        if semantics.get("is_comparative"):
+        is_comparative = self._coerce_bool(semantics.get("is_comparative"))
+        aggregated_period = semantics.get("aggregated_period") if isinstance(semantics.get("aggregated_period"), str) else None
+        aggregated_label = semantics.get("aggregated_label") if isinstance(semantics.get("aggregated_label"), str) else None
+        breakdown_unit = semantics.get("breakdown_unit") if isinstance(semantics.get("breakdown_unit"), str) else None
+
+        if is_comparative:
             base.append(
                 "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario y no añadas desgloses adicionales."
             )
-        elif semantics.get("aggregated_period"):
-            period_label = semantics.get("aggregated_label") or "solicitado"
-            breakdown_unit = semantics.get("breakdown_unit") or "más pequeño"
+        elif aggregated_period:
+            period_label = aggregated_label or "solicitado"
+            breakdown_unit_label = breakdown_unit or "más pequeño"
             base.append(
                 "La solicitud pide un agregado "
-                f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit} "
+                f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit_label} "
                 "del mismo periodo solo con fines analíticos."
             )
             base.append(
@@ -570,21 +620,27 @@ class CrewOrchestrator:
             "Sé preciso, conciso y basa tus conclusiones únicamente en los resultados mostrados.",
             "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo.",
         ]
-        if semantics.get("is_comparative"):
+        is_comparative = self._coerce_bool(semantics.get("is_comparative"))
+        aggregated_period = semantics.get("aggregated_period") if isinstance(semantics.get("aggregated_period"), str) else None
+        aggregated_label = semantics.get("aggregated_label") if isinstance(semantics.get("aggregated_label"), str) else None
+        breakdown_unit = semantics.get("breakdown_unit") if isinstance(semantics.get("breakdown_unit"), str) else None
+        wants_visual = self._coerce_bool(semantics.get("wants_visual"))
+
+        if is_comparative:
             base.append(
                 "La solicitud es comparativa o evolutiva; responde siguiendo esa estructura y evita agregar desgloses extra."
             )
-        elif semantics.get("aggregated_period"):
-            period_label = semantics.get("aggregated_label") or "principal"
-            breakdown_unit = semantics.get("breakdown_unit") or "secundario"
+        elif aggregated_period:
+            period_label = aggregated_label or "principal"
+            breakdown_unit_label = breakdown_unit or "secundario"
             base.append(
                 "Presenta el total "
-                f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit}."
+                f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit_label}."
             )
         base.append(
             "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
         )
-        if semantics.get("wants_visual"):
+        if wants_visual:
             base.append(
                 "El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
             )
@@ -682,16 +738,20 @@ class CrewOrchestrator:
                     "Los agentes de CrewAI no se inicializaron correctamente."
                 )
 
-            history_text = self._format_history(history)
-            has_history = bool(history_text.strip())
+            has_history = any(
+                (item.get("content") or "").strip()
+                for item in history
+                if isinstance(item, dict)
+            )
+            history_text = self._format_history(history) if has_history else ""
             if has_history:
                 self.history_tool.set_history(history_text)
-                if hasattr(self.interpreter_agent, "tools"):
-                    self.interpreter_agent.tools = [self.history_tool]
+                self.interpreter_agent = create_interpreter_agent(
+                    history_tool=self.history_tool, llm=self._llm
+                )
             else:
                 self.history_tool.set_history("")
-                if hasattr(self.interpreter_agent, "tools"):
-                    self.interpreter_agent.tools = []
+                self.interpreter_agent = create_interpreter_agent(llm=self._llm)
             self.metadata_tool.set_metadata(self.metadata)
             self.bigquery_tool.reset()
             self.validation_tool.set_metadata(self.metadata)
@@ -702,7 +762,9 @@ class CrewOrchestrator:
             interpreter_task = Task(
                 description=interpreter_prompt,
                 agent=self.interpreter_agent,
-                expected_output="JSON con requires_sql, reasoning y refined_question",
+                expected_output=(
+                    "JSON con requires_sql, reasoning, refined_question y semantics"
+                ),
             )
             interpreter_raw, interpreter_trace = self._run_task(
                 self.interpreter_agent,
@@ -715,7 +777,7 @@ class CrewOrchestrator:
             requires_sql = bool(interpreter_data.get("requires_sql", False))
             refined_question = interpreter_data.get("refined_question") or user_message
 
-            question_semantics = self._analyze_question_semantics(refined_question)
+            question_semantics = self._extract_semantics(interpreter_data)
 
             sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
             validation_data: Dict[str, object] = {}
