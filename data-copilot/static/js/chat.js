@@ -12,6 +12,8 @@
   const THINKING_GIF_URL =
     'https://media.tenor.com/On7kvXhzml4AAAAj/loading-gif.gif';
 
+  const chartInstances = {};
+
   let currentConversationId = null;
   let conversations = new Map();
 
@@ -69,7 +71,15 @@
     }
   }
 
+  function destroyChart(chartId) {
+    if (chartInstances[chartId]) {
+      chartInstances[chartId].destroy();
+      delete chartInstances[chartId];
+    }
+  }
+
   function renderMessages(conversation) {
+    Object.keys(chartInstances).forEach((chartId) => destroyChart(chartId));
     messagesContainer.innerHTML = '';
     if (!conversation || !conversation.messages.length) {
       emptyState.style.display = 'block';
@@ -77,7 +87,7 @@
       return;
     }
     emptyState.style.display = 'none';
-    conversation.messages.forEach((message) => {
+    conversation.messages.forEach((message, index) => {
       const bubble = document.createElement('div');
       bubble.className = `message ${message.role}`;
       if (message.loading) {
@@ -98,6 +108,56 @@
         bubble.appendChild(indicator);
       } else {
         bubble.textContent = message.content;
+      }
+
+      if (
+        message.chart &&
+        typeof window.Chart !== 'undefined' &&
+        Array.isArray(message.chart.labels) &&
+        Array.isArray(message.chart.values)
+      ) {
+        const chartContainer = document.createElement('div');
+        chartContainer.className = 'chart-container';
+        const canvas = document.createElement('canvas');
+        const chartId = `chart-${conversation.id}-${index}`;
+        canvas.id = chartId;
+        chartContainer.appendChild(canvas);
+        bubble.appendChild(chartContainer);
+
+        requestAnimationFrame(() => {
+          const context = canvas.getContext('2d');
+          if (!context) {
+            return;
+          }
+          destroyChart(chartId);
+          chartInstances[chartId] = new Chart(context, {
+            type: 'bar',
+            data: {
+              labels: message.chart.labels,
+              datasets: [
+                {
+                  label: message.chart.label || 'Resultado',
+                  data: message.chart.values,
+                  backgroundColor: 'rgba(106, 192, 171, 0.5)',
+                  borderColor: 'rgba(85, 165, 146, 0.9)',
+                  borderWidth: 1,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+              },
+              scales: {
+                y: {
+                  beginAtZero: true,
+                },
+              },
+            },
+          });
+        });
       }
       messagesContainer.appendChild(bubble);
     });

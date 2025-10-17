@@ -248,6 +248,16 @@
         height: 28px;
       }
 
+      .message .chart-container {
+        margin-top: 0.75rem;
+        height: 260px;
+      }
+
+      .message canvas {
+        width: 100% !important;
+        max-height: 320px;
+      }
+
       .empty-state {
         margin: auto;
         text-align: center;
@@ -347,6 +357,7 @@
     <script>
       const INITIAL_CONVERSATIONS = {{ conversations | tojson }};
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
   </body>
 </html>

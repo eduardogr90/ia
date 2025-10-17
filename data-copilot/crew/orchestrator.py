@@ -12,16 +12,21 @@ from crewai import Agent, Crew, Process, Task
 from crew.agents import (
     BigQueryQueryTool,
     ConversationHistoryTool,
+    GeminiAnalysisTool,
     SQLMetadataTool,
+    SQLValidationTool,
+    create_analyzer_agent,
     create_executor_agent,
     create_interpreter_agent,
     create_sql_generator_agent,
+    create_validator_agent,
     load_model_metadata,
 )
 from google.auth.exceptions import DefaultCredentialsError
 from services.bigquery_client import BigQueryClient
 from services.gemini_client import (
     DEFAULT_VERTEX_LOCATION,
+    GeminiClient,
     init_gemini_llm,
     load_vertex_credentials,
 )
@@ -46,18 +51,24 @@ class OrchestrationResult:
     response: str
     interpreter_output: Dict[str, object]
     sql_output: Dict[str, object]
+    validation_output: Dict[str, object]
+    analyzer_output: Dict[str, object]
     sql: Optional[str]
     rows: Optional[List[Dict[str, object]]]
     error: Optional[str]
+    chart: Optional[Dict[str, object]]
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "response": self.response,
             "interpreter_output": self.interpreter_output,
             "sql_output": self.sql_output,
+            "validation_output": self.validation_output,
+            "analyzer_output": self.analyzer_output,
             "sql": self.sql,
             "rows": self.rows,
             "error": self.error,
+            "chart": self.chart,
         }
 
 
@@ -95,13 +106,21 @@ class CrewOrchestrator:
                 detail=str(exc),
             ) from exc
         self.bigquery_tool = BigQueryQueryTool(client=self.bigquery_client)
+        self.validation_tool = SQLValidationTool(
+            metadata=self.metadata,
+            max_limit=getattr(self.bigquery_client, "max_rows", 1000),
+        )
+        self.analysis_tool: GeminiAnalysisTool | None = None
 
         self.interpreter_agent: Agent | None = None
         self.sql_agent: Agent | None = None
         self.executor_agent: Agent | None = None
+        self.validator_agent: Agent | None = None
+        self.analyzer_agent: Agent | None = None
 
         self._llm_ready = False
         self._llm = None
+        self._gemini_client: GeminiClient | None = None
 
     # ------------------------------------------------------------------
     def _ensure_llm(self) -> None:
@@ -137,6 +156,18 @@ class CrewOrchestrator:
         )
         self.sql_agent = create_sql_generator_agent(self.metadata_tool, llm=self._llm)
         self.executor_agent = create_executor_agent(self.bigquery_tool, llm=self._llm)
+        self.validator_agent = create_validator_agent(
+            self.validation_tool, llm=self._llm
+        )
+        if self._gemini_client is None:
+            self._gemini_client = GeminiClient(llm=self._llm)
+        else:
+            self._gemini_client.set_llm(self._llm)
+        if self.analysis_tool is None:
+            self.analysis_tool = GeminiAnalysisTool(client=self._gemini_client)
+        else:
+            self.analysis_tool.client = self._gemini_client
+        self.analyzer_agent = create_analyzer_agent(self.analysis_tool, llm=self._llm)
         self._llm_ready = True
 
     def _format_history(self, history: List[Dict[str, str]]) -> str:
@@ -240,8 +271,8 @@ class CrewOrchestrator:
         interpreter_data: Dict[str, object],
     ) -> str:
         base = [
-            "Eres el agente ejecutor. Si recibes una consulta SQL utilízala para "
-            "llamar al tool `bigquery_sql_runner` y obtener los datos."
+            "Eres el agente ejecutor. Recibiste una consulta SQL que ya fue validada."
+            " Debes ejecutarla usando exclusivamente el tool `bigquery_sql_runner`."
         ]
         base.append(f"Mensaje original del usuario: {user_message}")
         base.append(f"Análisis del intérprete: {interpreter_data.get('reasoning', '')}")
@@ -249,19 +280,55 @@ class CrewOrchestrator:
             base.append("Consulta SQL a ejecutar:")
             base.append(f"```sql\n{sql}\n```")
             base.append(
-                "Debes ejecutar la consulta con el tool antes de responder. Luego, "
-                "analiza los resultados y devuelve una respuesta final en español."
+                "Ejecuta el tool una sola vez y devuelve un resumen breve del resultado "
+                "en formato JSON con las claves status (success/error) y detail."
             )
         else:
             base.append(
-                "No hay consulta SQL que ejecutar. Explica la respuesta al usuario "
-                "basándote en el análisis previo."
+                "No hay consulta SQL que ejecutar. Responde con JSON {\"status\": \"skipped\"}."
             )
         base.append(
-            "Si el tool devuelve un error, informa claramente al usuario y sugiere "
-            "acciones para resolverlo."
+            "Si el tool devuelve un error, refleja ese error en la clave detail del JSON."
         )
-        base.append("Tu respuesta final debe ser concisa y en formato Markdown.")
+        base.append("No realices interpretaciones ni ofrezcas conclusiones analíticas.")
+        return "\n\n".join(base)
+
+    def _build_validator_prompt(
+        self,
+        sql: str,
+        refined_question: str,
+    ) -> str:
+        return (
+            "Evalúa la sentencia SQL propuesta antes de su ejecución. Debes usar el tool"
+            " `sql_validation_tool` para verificar que sea segura.\n"
+            f"Consulta propuesta:\n```sql\n{sql}\n```\n"
+            f"Pregunta del usuario: {refined_question}\n"
+            "Responde exclusivamente en JSON con las claves: valid (bool), message,"
+            " sanitized_sql, issues (lista) y warnings (lista)."
+        )
+
+    def _build_analyzer_prompt(
+        self,
+        refined_question: str,
+        sql: str | None,
+        rows: List[Dict[str, object]] | None,
+    ) -> str:
+        base = [
+            "Analiza los datos devueltos por BigQuery y sintetiza los hallazgos en español.",
+            "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo y,"
+            " si aplica, sugerencias de visualización.",
+            f"Pregunta a resolver: {refined_question}",
+        ]
+        if sql:
+            base.append("Consulta SQL ejecutada:")
+            base.append(f"```sql\n{sql}\n```")
+        base.append(
+            f"Cantidad de filas disponibles: {len(rows) if rows else 0}."
+            " Usa el tool para obtener la respuesta final."
+        )
+        base.append(
+            "El resultado final debe ser JSON con las claves text y chart (esta última puede ser null)."
+        )
         return "\n\n".join(base)
 
     # ------------------------------------------------------------------
@@ -269,7 +336,16 @@ class CrewOrchestrator:
         self._ensure_llm()
 
         try:
-            if not all([self.interpreter_agent, self.sql_agent, self.executor_agent]):
+            if not all(
+                [
+                    self.interpreter_agent,
+                    self.sql_agent,
+                    self.executor_agent,
+                    self.validator_agent,
+                    self.analyzer_agent,
+                    self.analysis_tool,
+                ]
+            ):
                 raise OrchestrationError(
                     "Los agentes de CrewAI no se inicializaron correctamente."
                 )
@@ -278,6 +354,7 @@ class CrewOrchestrator:
             self.history_tool.set_history(history_text)
             self.metadata_tool.set_metadata(self.metadata)
             self.bigquery_tool.reset()
+            self.validation_tool.set_metadata(self.metadata)
 
             interpreter_prompt = self._build_interpreter_prompt(user_message, history_text)
             interpreter_task = Task(
@@ -292,6 +369,8 @@ class CrewOrchestrator:
             refined_question = interpreter_data.get("refined_question") or user_message
 
             sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
+            validation_data: Dict[str, object] = {}
+            analyzer_output: Dict[str, object] = {}
             if requires_sql:
                 metadata_summary = self.metadata_tool.summary()
                 sql_prompt = self._build_sql_prompt(
@@ -309,25 +388,140 @@ class CrewOrchestrator:
             if isinstance(sql_text, str) and not sql_text.strip():
                 sql_text = None
 
-            executor_prompt = self._build_executor_prompt(
-                user_message,
-                sql_text if isinstance(sql_text, str) else None,
-                interpreter_data,
-            )
-            executor_task = Task(
-                description=executor_prompt,
-                agent=self.executor_agent,
-                expected_output="Respuesta final en texto",
-            )
-            final_response = self._run_task(self.executor_agent, executor_task)
+            sanitized_sql: str | None = None
+            if requires_sql and isinstance(sql_text, str):
+                self.validation_tool.set_candidate(sql_text, refined_question)
+                validator_prompt = self._build_validator_prompt(
+                    sql_text, refined_question
+                )
+                validator_task = Task(
+                    description=validator_prompt,
+                    agent=self.validator_agent,
+                    expected_output="JSON con valid, message, sanitized_sql, issues, warnings",
+                )
+                validation_raw = self._run_task(self.validator_agent, validator_task)
+                validation_data = self._parse_json(validation_raw)
+                is_valid = bool(validation_data.get("valid"))
+                sanitized_sql = (
+                    validation_data.get("sanitized_sql")
+                    if isinstance(validation_data, dict)
+                    else None
+                )
+                if isinstance(sanitized_sql, str) and not sanitized_sql.strip():
+                    sanitized_sql = None
+                if not is_valid:
+                    message = (
+                        validation_data.get("message")
+                        or "La consulta fue bloqueada por motivos de seguridad."
+                    )
+                    return OrchestrationResult(
+                        response=str(message).strip(),
+                        interpreter_output=interpreter_data,
+                        sql_output=sql_data,
+                        validation_output=validation_data,
+                        analyzer_output={},
+                        sql=None,
+                        rows=None,
+                        error=str(message),
+                        chart=None,
+                    )
 
+            if requires_sql and not sanitized_sql:
+                return OrchestrationResult(
+                    response="No se pudo generar una consulta SQL válida.",
+                    interpreter_output=interpreter_data,
+                    sql_output=sql_data,
+                    validation_output=validation_data,
+                    analyzer_output={},
+                    sql=None,
+                    rows=None,
+                    error="Consulta SQL vacía tras la validación.",
+                    chart=None,
+                )
+
+            rows: List[Dict[str, object]] | None = None
+            execution_error: Optional[str] = None
+            if requires_sql and sanitized_sql:
+                executor_prompt = self._build_executor_prompt(
+                    user_message,
+                    sanitized_sql,
+                    interpreter_data,
+                )
+                executor_task = Task(
+                    description=executor_prompt,
+                    agent=self.executor_agent,
+                    expected_output="Confirmación de ejecución o error",
+                )
+                _ = self._run_task(self.executor_agent, executor_task)
+                rows = self.bigquery_tool.last_result
+                execution_error = self.bigquery_tool.last_error
+                if execution_error:
+                    error_message = (
+                        f"Error al ejecutar la consulta en BigQuery: {execution_error}"
+                    )
+                    return OrchestrationResult(
+                        response=error_message,
+                        interpreter_output=interpreter_data,
+                        sql_output=sql_data,
+                        validation_output=validation_data,
+                        analyzer_output={},
+                        sql=sanitized_sql,
+                        rows=rows,
+                        error=execution_error,
+                        chart=None,
+                    )
+
+                self.analysis_tool.set_context(
+                    question=refined_question,
+                    sql=sanitized_sql,
+                    results=rows or [],
+                )
+                analyzer_prompt = self._build_analyzer_prompt(
+                    refined_question,
+                    sanitized_sql,
+                    rows or [],
+                )
+                analyzer_task = Task(
+                    description=analyzer_prompt,
+                    agent=self.analyzer_agent,
+                    expected_output="JSON con text y chart",
+                )
+                analyzer_raw = self._run_task(self.analyzer_agent, analyzer_task)
+                analyzer_output = self._parse_json(analyzer_raw)
+                response_text = analyzer_output.get("text")
+                if not isinstance(response_text, str) or not response_text.strip():
+                    response_text = str(analyzer_raw).strip()
+                chart = analyzer_output.get("chart") if isinstance(analyzer_output, dict) else None
+                chart_payload = chart if isinstance(chart, dict) else None
+                return OrchestrationResult(
+                    response=response_text.strip(),
+                    interpreter_output=interpreter_data,
+                    sql_output=sql_data,
+                    validation_output=validation_data,
+                    analyzer_output=analyzer_output if isinstance(analyzer_output, dict) else {},
+                    sql=sanitized_sql,
+                    rows=rows,
+                    error=None,
+                    chart=chart_payload,
+                )
+
+            # Caso en que no se requiere SQL: responder con el razonamiento del intérprete.
+            fallback_text = (
+                interpreter_data.get("reasoning")
+                if isinstance(interpreter_data, dict)
+                else None
+            ) or "La pregunta no requiere ejecutar SQL."
+            analyzer_output = {"text": str(fallback_text), "chart": None}
             return OrchestrationResult(
-                response=final_response.strip(),
+                response=str(fallback_text).strip(),
                 interpreter_output=interpreter_data,
                 sql_output=sql_data,
-                sql=sql_text if isinstance(sql_text, str) else None,
-                rows=self.bigquery_tool.last_result,
-                error=self.bigquery_tool.last_error,
+                validation_output=validation_data,
+                analyzer_output=analyzer_output,
+                sql=None,
+                rows=None,
+                error=None,
+                chart=None,
             )
         except OrchestrationError:
             raise
