@@ -1,0 +1,13 @@
+{
+  "id": "2025_10_17_09_19_09",
+  "messages": [
+    {
+      "role": "user",
+      "content": "cuantas ventas se hicieron en 2025 por proyecto?"
+    },
+    {
+      "role": "assistant",
+      "content": "En el año 2025, las ventas por proyecto fueron las siguientes:\n\n*   Naturgy Sales Alianza: 1827\n*   iberdrola-pt: 3314\n*   Endesa-Sales: 2480\n*   Endesa PT: 25141\n*   Endesa Sales PT: 2786\n*   total: 14940\n*   Endesa: 27180\n*   Naturgy: 73073\n*   Repsol: 26510"
+    }
+  ]
+}
