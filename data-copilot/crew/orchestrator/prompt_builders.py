@@ -29,7 +29,7 @@ def _build_interpreter_prompt(
     base.append("Responde exclusivamente en JSON con las claves:")
     base.append("- requires_sql: true o false")
     base.append("- reasoning: explicación corta")
-    base.append("- refined_question: reformulación clara de la solicitud")
+    base.append("- refined_question: reformulación clara de la solicitud, si no es comparativa ni evolutiva y agregated period solo tiene un valor, reformula con una de una unidad inferior (Año->Mes->semana->Dia)")
     base.append(
         "- semantics: objeto con is_comparative (bool), wants_visual (bool), aggregated_period (string o null), aggregated_label (string o null) y breakdown_unit (string o null)"
     )
