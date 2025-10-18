@@ -41,7 +41,8 @@ class BaseCrewOrchestrator:
         bigquery_client: Optional[BigQueryClient] = None,
     ) -> None:
         self.metadata_dir = (
-            metadata_dir or Path(__file__).resolve().parent.parent / "data" / "model"
+            metadata_dir
+            or Path(__file__).resolve().parents[2] / "data" / "model"
         )
         self.metadata = load_model_metadata(self.metadata_dir)
 
