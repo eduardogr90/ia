@@ -29,21 +29,10 @@ def _build_interpreter_prompt(
     base.append("Responde exclusivamente en JSON con las claves:")
     base.append("- requires_sql: true o false")
     base.append("- reasoning: explicación corta")
-    base.append("- refined_question: reformulación clara de la solicitud. Si el usuario pide un periodo de tiempo y no se trata de una solicitud comparativa ni evolutiva, incluye un desglose temporal un nivel más detallado (Año→Mes→Semana→Día).")
-    base.append("- semantics: objeto con las siguientes claves:")
-    base.append("    - is_comparative (bool): si compara periodos o categorías.")
-    base.append("    - wants_visual (bool): si desea una visualización o gráfico.")
-    base.append("    - aggregated_period (str|null): periodo principal ('año', 'mes', 'semana', 'día').")
-    base.append("    - aggregated_labels ([str|null]): lista categorías de agrupación ('proyecto', 'cliente', 'categoría').")
-    base.append("    - breakdown_units ([str|null]): lista unidades de desglose adicional (por ejemplo, 'semana' dentro de un mes).")
-    base.append("    - output_type ([str]): tipo de resultado esperado según la intención del usuario:")
-    base.append("        * 'value' → valor único o agregado.")
-    base.append("        * 'list' → lista simple de elementos.")
-    base.append("        * 'table' → tabla con una sola dimensión de agrupación.")
-    base.append("        * 'matrix' → cruce bidimensional (si hay 'aggregated_label' y 'breakdown_unit') o dos columnas en aggregated_label.")
-    base.append("        * 'visual' → gráfico o visualización.")
-    base.append("        * 'otput1+output2' → cuando se solicita una tabla y un gráfico o visualización etc.")
-
+    base.append("- refined_question: reformulación clara de la solicitud")
+    base.append(
+        "- semantics: objeto con is_comparative (bool), wants_visual (bool), aggregated_period (string o null), aggregated_label (string o null) y breakdown_unit (string o null)"
+    )
     return "\n".join(base)
 
 
@@ -55,7 +44,7 @@ def _build_sql_prompt(
 ) -> str:
     """Create the instruction block used by the SQL generator agent."""
     base = [
-        "Genera una consulta SQL siguiendo el BigQuery Standard SQL que responda la pregunta. Se pueden hacer ",
+        "Genera una consulta SQL siguiendo el BigQuery Standard SQL que responda la pregunta.",
         "Utiliza solo tablas y columnas disponibles en los metadatos y respeta todos los filtros implícitos en la solicitud.",
         f"Pregunta refinada: {refined_question}",
         f"Contexto adicional: {interpreter_data.get('reasoning', '')}",
@@ -84,7 +73,7 @@ def _build_sql_prompt(
 
     if is_comparative:
         base.append(
-            "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario"
+            "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario y no añadas desgloses adicionales."
         )
     elif aggregated_period:
         period_label = aggregated_label or "solicitado"
@@ -93,6 +82,9 @@ def _build_sql_prompt(
             "La solicitud pide un agregado "
             f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit_label} "
             "del mismo periodo solo con fines analíticos."
+        )
+        base.append(
+            "Puedes usar CTEs, UNION ALL o GROUPING SETS para entregar ambos niveles en un mismo resultado, identificando cada fila con una columna que indique el nivel de agregación (por ejemplo, nivel_agregacion)."
         )
         base.append(
             "No alteres la métrica original ni cambies los filtros solicitados. Si el desglose adicional no es viable con los metadatos disponibles, indícalo con claridad en analysis."
@@ -147,21 +139,22 @@ def _build_validator_prompt(
 ) -> str:
     """Prepare the validation prompt that guards SQL safety."""
     return (
-        "Evalúa la sentencia SQL propuesta si es valida segun el Bigquery SQL Estandar. Recuerda que DAYOFWEEK no es valido\n"
+        "Evalúa la sentencia SQL propuesta antes de su ejecución. Debes usar el tool"
+        " `sql_validation_tool` para verificar que sea segura.\n"
         f"Consulta propuesta:\n```sql\n{sql}\n```\n"
         f"Pregunta del usuario: {refined_question}\n"
         "Responde exclusivamente en JSON con las claves: valid (bool), message,"
         " sanitized_sql, issues (lista) y warnings (lista)."
     )
 
-"""
+
 def _build_analyzer_prompt(
     refined_question: str,
     sql: str | None,
     rows: List[Dict[str, object]] | None,
     semantics: Dict[str, object],
 ) -> str:
-
+    """Build the prompt that guides the Gemini-powered analysis agent."""
     base = [
         "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
         "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
@@ -185,174 +178,40 @@ def _build_analyzer_prompt(
         if isinstance(semantics.get("breakdown_unit"), str)
         else None
     )
-    output_type_label = (
-        semantics.get("output_type")
-        if isinstance(semantics.get("output_type"), str)
-        else None
-    )
-
-
     wants_visual = coerce_bool(semantics.get("wants_visual"))
 
     if is_comparative:
         base.append(
-            "La solicitud es comparativa, responde siguiendo esa estructura"
+            "La solicitud es comparativa o evolutiva; responde siguiendo esa estructura y evita agregar desgloses extra."
         )
     elif aggregated_period:
         period_label = aggregated_label or "principal"
         breakdown_unit_label = breakdown_unit or "secundario"
-        
+        base.append(
+            "Presenta el total "
+            f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit_label}."
+        )
     base.append(
         "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
     )
     if wants_visual:
         base.append(
-            "Añade{output_type_label} . El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
+            "El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
         )
     else:
         base.append(
-            "Añade{output_type_label}. El usuario no pidió gráficos; mantén chart en null y no propongas visualizaciones."
+            "El usuario no pidió gráficos; mantén chart en null y no propongas visualizaciones."
         )
     if sql:
         base.append("Consulta SQL ejecutada:")
         base.append(f"```sql\n{sql}\n```")
-
+    base.append(
+        f"Cantidad de filas disponibles: {len(rows) if rows else 0}. Usa el tool para obtener la respuesta final."
+    )
     base.append(
         "El resultado final debe ser JSON con las claves text y chart (esta última puede ser null)."
     )
     base.append(f"Pregunta a resolver: {refined_question}")
-    return "\n\n".join(base)
-"""
-
-def _build_analyzer_prompt(
-    refined_question: str,
-    sql: str | None,
-    rows: List[Dict[str, object]] | None,
-    semantics: Dict[str, object],
-) -> str:
-    """Build the prompt that guides the Gemini-powered analysis agent with automatic chart selection."""
-    base = [
-        "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
-        "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
-        "Sé preciso, conciso y basa tus conclusiones únicamente en los resultados mostrados.",
-        "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo.",
-        "El resultado final debe ser JSON con las claves `text` y `chart` (esta última puede ser null).",
-    ]
-
-    # === Variables semánticas ===
-    is_comparative = bool(semantics.get("is_comparative"))
-    wants_visual = bool(semantics.get("wants_visual"))
-    aggregated_period = semantics.get("aggregated_period")
-    aggregated_labels = semantics.get("aggregated_labels", []) or []
-    breakdown_units = semantics.get("breakdown_units", []) or []
-    output_type = semantics.get("output_type", "value")
-
-    chart_type = None
-    chart_spec = {}
-
-    # === Lógica de selección de gráfico ===
-
-    # 1. Sin visualización
-    if not wants_visual:
-        chart_type = None
-    else:
-        # 2. Casos con periodo → gráficos temporales
-        if aggregated_period in ["año", "mes", "semana", "día"]:
-            if aggregated_labels or is_comparative:
-                chart_type = "line_multiple"
-                chart_spec = {
-                    "x": aggregated_period,
-                    "y": "valor",
-                    "series": aggregated_labels or ["categoría"],
-                }
-            else:
-                chart_type = "line"
-                chart_spec = {
-                    "x": aggregated_period,
-                    "y": "valor",
-                }
-
-        # 3. Casos categóricos sin periodo
-        elif aggregated_labels and not aggregated_period:
-            if len(aggregated_labels) == 1 and not breakdown_units:
-                chart_type = "bar"
-                chart_spec = {
-                    "x": aggregated_labels[0],
-                    "y": "valor",
-                }
-            elif breakdown_units:
-                # Decidir entre barras agrupadas o apiladas
-                chart_type = "grouped_bar" if not is_comparative else "stacked_bar"
-                chart_spec = {
-                    "x": aggregated_labels[0],
-                    "y": "valor",
-                    "group": breakdown_units[0],
-                }
-            elif len(aggregated_labels) == 2:
-                chart_type = "matrix"
-                chart_spec = {
-                    "rows": aggregated_labels[0],
-                    "cols": aggregated_labels[1],
-                    "value": "valor",
-                }
-
-        # 4. Composición de un todo (una categoría, pocos elementos)
-        if (
-            chart_type is None
-            and len(aggregated_labels) == 1
-            and not breakdown_units
-            and output_type in ["visual", "matrix"]
-        ):
-            chart_type = "pie"
-            chart_spec = {"category": aggregated_labels[0], "value": "valor"}
-
-        # 5. Periodo + múltiples labels → matriz o barras agrupadas
-        if aggregated_period and aggregated_labels:
-            if len(aggregated_labels) >= 2:
-                chart_type = "matrix"
-                chart_spec = {
-                    "rows": aggregated_labels[0],
-                    "cols": aggregated_period,
-                    "value": "valor",
-                }
-            else:
-                chart_type = "grouped_bar"
-                chart_spec = {
-                    "x": aggregated_period,
-                    "y": "valor",
-                    "group": aggregated_labels[0],
-                }
-
-        # 6. Valor por defecto si no detecta nada
-        if chart_type is None and wants_visual:
-            chart_type = "bar"
-            chart_spec = {"x": aggregated_labels[0] if aggregated_labels else "categoría", "y": "valor"}
-
-    # === Añadir instrucciones al prompt ===
-    if is_comparative:
-        base.append("La solicitud es comparativa, responde comparando explícitamente las categorías o periodos.")
-
-    base.append(
-        "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
-    )
-
-    if wants_visual:
-        if chart_type:
-            base.append(
-                f"El usuario solicitó una visualización. Usa el tipo de gráfico más adecuado según los datos: `{chart_type}`."
-            )
-            base.append(f"Configura los ejes o dimensiones según:\n{json.dumps(chart_spec, ensure_ascii=False, indent=2)}")
-        else:
-            base.append("El usuario solicitó una visualización, pero los datos no la justifican; mantén `chart` en null.")
-    else:
-        base.append("El usuario no pidió gráficos; mantén `chart` en null y no propongas visualizaciones.")
-
-    if sql:
-        base.append("Consulta SQL ejecutada:")
-        base.append(f"```sql\n{sql}\n```")
-
-    base.append(f"Pregunta a resolver: {refined_question}")
-
     return "\n\n".join(base)
 
 
