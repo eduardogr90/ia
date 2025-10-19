@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 
@@ -168,7 +169,7 @@ class BigQueryClient:
         return statement
 
     def run_query(self, sql: str) -> List[Dict[str, object]]:
-        """Execute a read-only query and return the rows as dictionaries."""
+        """Execute a read-only query and return the rows as JSON-serializable dicts."""
 
         statement = self._validate_sql(sql)
         try:
@@ -176,7 +177,21 @@ class BigQueryClient:
             rows = job.result(max_results=self.max_rows)
         except Exception as exc:  # pragma: no cover - requires BigQuery connection
             raise RuntimeError(f"Error al ejecutar la consulta en BigQuery: {exc}")
-        return [dict(row.items()) for row in rows]
+        return [
+            {
+                key: self._normalize_value(value)
+                for key, value in row.items()
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _normalize_value(value: object) -> object:
+        """Return a JSON-serializable representation for special BigQuery types."""
+
+        if isinstance(value, (datetime, date, time)):
+            return value.isoformat()
+        return value
 
 
 __all__ = ["BigQueryClient", "load_bigquery_credentials"]
