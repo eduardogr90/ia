@@ -53,5 +53,77 @@
       "Se eliminó el punto y coma final de la sentencia.",
       "Se aplicó automáticamente LIMIT 1000."
     ]
+  },
+  {
+    "timestamp": "2025-10-18T00:28:23.378140+00:00",
+    "question": "What is the total number of sales per project this month?",
+    "submitted_sql": "SELECT\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    SUM(1) AS total_sales,\n    CASE\n        WHEN acc_proyecto_venta IS NULL THEN 'Total'\n        ELSE 'Project'\n    END AS aggregation_level\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    GROUPING SETS ((acc_proyecto_venta), ())\nORDER BY\n    aggregation_level DESC, project;",
+    "sanitized_sql": "SELECT\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    SUM(1) AS total_sales,\n    CASE\n        WHEN acc_proyecto_venta IS NULL THEN 'Total'\n        ELSE 'Project'\n    END AS aggregation_level\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    GROUPING SETS ((acc_proyecto_venta), ())\nORDER BY\n    aggregation_level DESC, project",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-18T00:35:28.193002+00:00",
+    "question": "¿Cuántas ventas se han realizado esta semana, desglosadas por proyecto y servicio?",
+    "submitted_sql": "WITH sales_this_week AS (\n  SELECT\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    COUNT(sl_id) AS total_sales,\n    FORMAT_DATE('%Y-%W', acc_fecha_venta) AS week_of_sale\n  FROM\n    `accom-dw.accom_ventas.tb_result_energia`\n  WHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (DAYOFWEEK(CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\n  GROUP BY 1, 2, 4\n)\nSELECT\n  COALESCE(acc_proyecto_venta, 'Total') AS project,\n  COALESCE(acc_producto_servicio, 'Total') AS service,\n  SUM(total_sales) AS total_sales,\n  CASE\n    WHEN acc_proyecto_venta IS NULL AND acc_producto_servicio IS NULL THEN 'Total'\n    WHEN acc_proyecto_venta IS NULL THEN 'Total by Service'\n    WHEN acc_producto_servicio IS NULL THEN 'Total by Project'\n    ELSE 'By Project and Service'\n  END AS aggregation_level\nFROM sales_this_week\nGROUP BY\n  acc_proyecto_venta,\n  acc_producto_servicio\n  WITH ROLLUP\nORDER BY\n  aggregation_level DESC, project, service",
+    "sanitized_sql": "WITH sales_this_week AS (\n  SELECT\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    COUNT(sl_id) AS total_sales,\n    FORMAT_DATE('%Y-%W', acc_fecha_venta) AS week_of_sale\n  FROM\n    `accom-dw.accom_ventas.tb_result_energia`\n  WHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (DAYOFWEEK(CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\n  GROUP BY 1, 2, 4\n)\nSELECT\n  COALESCE(acc_proyecto_venta, 'Total') AS project,\n  COALESCE(acc_producto_servicio, 'Total') AS service,\n  SUM(total_sales) AS total_sales,\n  CASE\n    WHEN acc_proyecto_venta IS NULL AND acc_producto_servicio IS NULL THEN 'Total'\n    WHEN acc_proyecto_venta IS NULL THEN 'Total by Service'\n    WHEN acc_producto_servicio IS NULL THEN 'Total by Project'\n    ELSE 'By Project and Service'\n  END AS aggregation_level\nFROM sales_this_week\nGROUP BY\n  acc_proyecto_venta,\n  acc_producto_servicio\n  WITH ROLLUP\nORDER BY\n  aggregation_level DESC, project, service",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-18T00:48:10.045026+00:00",
+    "question": "Cuántas ventas hemos hecho esta semana por proyecto y servicio?",
+    "submitted_sql": "WITH sales_data AS (  SELECT    acc_fecha_venta,    acc_proyecto_venta,    acc_producto_servicio  FROM    `accom-dw.accom_ventas.tb_result_energia`  WHERE    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL EXTRACT(DAYOFWEEK FROM CURRENT_DATE()) - 1 DAY) AND CURRENT_DATE() ) SELECT  acc_proyecto_venta,  acc_producto_servicio,  COUNT(*) AS total_sales,  CASE    WHEN acc_proyecto_venta IS NULL AND acc_producto_servicio IS NULL THEN 'Total'    WHEN acc_proyecto_venta IS NULL THEN 'Total por Servicio'    WHEN acc_producto_servicio IS NULL THEN 'Total por Proyecto'    ELSE 'Detalle'  END AS aggregation_level FROM  sales_data GROUP BY  GROUPING SETS (    (acc_proyecto_venta, acc_producto_servicio),    (acc_proyecto_venta),    (acc_producto_servicio),    ()  ) ORDER BY  aggregation_level, acc_proyecto_venta, acc_producto_servicio;",
+    "sanitized_sql": "WITH sales_data AS (  SELECT    acc_fecha_venta,    acc_proyecto_venta,    acc_producto_servicio  FROM    `accom-dw.accom_ventas.tb_result_energia`  WHERE    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL EXTRACT(DAYOFWEEK FROM CURRENT_DATE()) - 1 DAY) AND CURRENT_DATE() ) SELECT  acc_proyecto_venta,  acc_producto_servicio,  COUNT(*) AS total_sales,  CASE    WHEN acc_proyecto_venta IS NULL AND acc_producto_servicio IS NULL THEN 'Total'    WHEN acc_proyecto_venta IS NULL THEN 'Total por Servicio'    WHEN acc_producto_servicio IS NULL THEN 'Total por Proyecto'    ELSE 'Detalle'  END AS aggregation_level FROM  sales_data GROUP BY  GROUPING SETS (    (acc_proyecto_venta, acc_producto_servicio),    (acc_proyecto_venta),    (acc_producto_servicio),    ()  ) ORDER BY  aggregation_level, acc_proyecto_venta, acc_producto_servicio",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-18T01:14:10.747738+00:00",
+    "question": "¿Cuántas ventas se han realizado esta semana por proyecto y servicio, desglosado por día?",
+    "submitted_sql": "SELECT\n    FORMAT_DATE('%Y-%m-%d', acc_fecha_venta) AS venta_dia,\n    acc_proyecto_venta AS proyecto,\n    acc_producto_servicio AS servicio,\n    COUNT(*) AS total_ventas,\n    CASE\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 0 AND GROUPING(acc_proyecto_venta) = 0 AND GROUPING(acc_producto_servicio) = 0 THEN 'Dia, Proyecto, Servicio'\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 1 AND GROUPING(acc_proyecto_venta) = 0 AND GROUPING(acc_producto_servicio) = 0 THEN 'Proyecto, Servicio'\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 0 AND GROUPING(acc_proyecto_venta) = 1 AND GROUPING(acc_producto_servicio) = 0 THEN 'Dia, Servicio'\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 0 AND GROUPING(acc_proyecto_venta) = 0 AND GROUPING(acc_producto_servicio) = 1 THEN 'Dia, Proyecto'\n        ELSE 'Total'\n    END AS nivel_agregacion\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (EXTRACT(DAYOFWEEK FROM CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\nGROUP BY\n    GROUPING SETS (\n        (FORMAT_DATE('%Y-%m-%d', acc_fecha_venta), acc_proyecto_venta, acc_producto_servicio),\n        (acc_proyecto_venta, acc_producto_servicio),\n        (FORMAT_DATE('%Y-%m-%d', acc_fecha_venta), acc_proyecto_venta),\n        (FORMAT_DATE('%Y-%m-%d', acc_fecha_venta), acc_producto_servicio)\n    )\nORDER BY\n    venta_dia, proyecto, servicio;",
+    "sanitized_sql": "SELECT\n    FORMAT_DATE('%Y-%m-%d', acc_fecha_venta) AS venta_dia,\n    acc_proyecto_venta AS proyecto,\n    acc_producto_servicio AS servicio,\n    COUNT(*) AS total_ventas,\n    CASE\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 0 AND GROUPING(acc_proyecto_venta) = 0 AND GROUPING(acc_producto_servicio) = 0 THEN 'Dia, Proyecto, Servicio'\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 1 AND GROUPING(acc_proyecto_venta) = 0 AND GROUPING(acc_producto_servicio) = 0 THEN 'Proyecto, Servicio'\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 0 AND GROUPING(acc_proyecto_venta) = 1 AND GROUPING(acc_producto_servicio) = 0 THEN 'Dia, Servicio'\n        WHEN GROUPING(FORMAT_DATE('%Y-%m-%d', acc_fecha_venta)) = 0 AND GROUPING(acc_proyecto_venta) = 0 AND GROUPING(acc_producto_servicio) = 1 THEN 'Dia, Proyecto'\n        ELSE 'Total'\n    END AS nivel_agregacion\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (EXTRACT(DAYOFWEEK FROM CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\nGROUP BY\n    GROUPING SETS (\n        (FORMAT_DATE('%Y-%m-%d', acc_fecha_venta), acc_proyecto_venta, acc_producto_servicio),\n        (acc_proyecto_venta, acc_producto_servicio),\n        (FORMAT_DATE('%Y-%m-%d', acc_fecha_venta), acc_proyecto_venta),\n        (FORMAT_DATE('%Y-%m-%d', acc_fecha_venta), acc_producto_servicio)\n    )\nORDER BY\n    venta_dia, proyecto, servicio",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-18T01:32:41.451594+00:00",
+    "question": "¿Cuántas ventas se han realizado esta semana, desglosadas por proyecto y servicio, con un desglose diario?",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    DATE(acc_fecha_venta) AS venta_dia,\n    COUNT(*) AS total_ventas\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (DAYOFWEEK(CURRENT_DATE()) - 2) DAY) AND CURRENT_DATE()\nGROUP BY\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    venta_dia\nORDER BY\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    venta_dia",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    DATE(acc_fecha_venta) AS venta_dia,\n    COUNT(*) AS total_ventas\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (DAYOFWEEK(CURRENT_DATE()) - 2) DAY) AND CURRENT_DATE()\nGROUP BY\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    venta_dia\nORDER BY\n    acc_proyecto_venta,\n    acc_producto_servicio,\n    venta_dia",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-18T01:37:38.822418+00:00",
+    "question": "Cuántas ventas se han realizado esta semana, desglosadas por proyecto y servicio?",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    COUNT(*) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (DAYOFWEEK(CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\nGROUP BY\n    project, service",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    COUNT(*) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (DAYOFWEEK(CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\nGROUP BY\n    project, service",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-18T01:37:41.199773+00:00",
+    "question": "Cuántas ventas se han realizado esta semana, desglosadas por proyecto y servicio?",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    COUNT(*) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (EXTRACT(DAYOFWEEK FROM CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\nGROUP BY\n    project, service",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    COUNT(*) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    acc_fecha_venta BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL (EXTRACT(DAYOFWEEK FROM CURRENT_DATE()) - 1) DAY) AND CURRENT_DATE()\nGROUP BY\n    project, service",
+    "valid": true,
+    "issues": [],
+    "warnings": []
+  },
+  {
+    "timestamp": "2025-10-19T05:30:22.663905+00:00",
+    "question": "¿Cuántas ventas hemos hecho este mes, desglosadas por proyecto y servicio? Desglosando el mes en semanas y días.",
+    "submitted_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    DATE_TRUNC(acc_fecha_venta, WEEK) AS week,\n    acc_fecha_venta AS day,\n    COUNT(*) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    project, service, week, day\nORDER BY\n    project, service, week, day;",
+    "sanitized_sql": "SELECT\n    acc_proyecto_venta AS project,\n    acc_producto_servicio AS service,\n    DATE_TRUNC(acc_fecha_venta, WEEK) AS week,\n    acc_fecha_venta AS day,\n    COUNT(*) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    project, service, week, day\nORDER BY\n    project, service, week, day",
+    "valid": true,
+    "issues": [],
+    "warnings": []
   }
 ]
