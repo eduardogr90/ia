@@ -1,0 +1,6 @@
+Flask
+Flask-Cors
+pydantic
+python-slugify
+ruamel.yaml
+pytest
