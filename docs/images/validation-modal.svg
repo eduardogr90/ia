@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect fill="#020617" width="960" height="540" rx="24" />
+  <rect x="48" y="48" width="864" height="444" fill="#ffffff" rx="20" stroke="#1d4ed8" stroke-width="3" />
+  <text x="72" y="96" fill="#1d4ed8" font-size="30" font-weight="700" font-family="'Inter', sans-serif">Validation modal</text>
+  <rect x="72" y="120" width="816" height="320" fill="#f1f5f9" rx="16" />
+  <text x="96" y="160" fill="#0f172a" font-size="20" font-family="'Inter', sans-serif">✓ Valid flow</text>
+  <text x="96" y="194" fill="#475569" font-size="18" font-family="'Inter', sans-serif">Warnings: Multiple start nodes · Message node greeting has outgoing edges</text>
+  <rect x="96" y="218" width="760" height="80" fill="#e0f2fe" rx="14" stroke="#38bdf8" stroke-width="2" />
+  <text x="116" y="246" fill="#0369a1" font-size="18" font-family="'Inter', sans-serif">Path 1 — greeting → identification (yes) → pass</text>
+  <rect x="96" y="310" width="760" height="80" fill="#ede9fe" rx="14" stroke="#8b5cf6" stroke-width="2" />
+  <text x="116" y="338" fill="#5b21b6" font-size="18" font-family="'Inter', sans-serif">Path 2 — greeting → fallback (no) → escalate</text>
+  <text x="72" y="412" fill="#1f2937" font-size="18" font-family="'Inter', sans-serif">Use “Fit to content” before exporting JPG for full-path screenshots.</text>
+  <rect x="360" y="436" width="240" height="40" fill="#1d4ed8" rx="20" />
+  <text x="432" y="463" fill="#f8fafc" font-size="18" font-family="'Inter', sans-serif">Close</text>
+</svg>
