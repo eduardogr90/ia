@@ -13,22 +13,6 @@ from langchain_google_vertexai import VertexAI
 
 LOGGER = logging.getLogger(__name__)
 
-
-class CrewCompatibleVertexAI(VertexAI):
-    """VertexAI wrapper that adds the helpers expected by CrewAI."""
-
-    def supports_stop_words(self) -> bool:  # pragma: no cover - trivial behaviour
-        """Return whether the underlying model supports explicit stop words."""
-
-        base_method = getattr(VertexAI, "supports_stop_words", None)
-        if callable(base_method):
-            try:
-                return bool(base_method(self))  # type: ignore[misc]
-            except TypeError:
-                # ``supports_stop_words`` in future releases might not expect ``self``.
-                return bool(base_method())  # type: ignore[call-arg]
-        return False
-
 DEFAULT_VERTEX_LOCATION = "us-central1"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-lite-001"
 DEFAULT_CREDENTIALS_PATH = (
@@ -255,7 +239,7 @@ def init_gemini_llm(
         client_kwargs.update(extra_vertex_params)
 
     try:
-        llm: VertexAI = CrewCompatibleVertexAI(**client_kwargs)
+        llm = VertexAI(**client_kwargs)
     except Exception as exc:  # pragma: no cover - depende del entorno de Vertex AI
         LOGGER.exception(
             "Error al inicializar el modelo Gemini en Vertex AI: %s",
@@ -353,7 +337,6 @@ class GeminiClient:
 
 
 __all__ = [
-    "CrewCompatibleVertexAI",
     "DEFAULT_VERTEX_LOCATION",
     "load_vertex_credentials",
     "init_gemini_llm",
