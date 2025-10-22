@@ -23,6 +23,7 @@ def create_sql_generator_agent(
         backstory=(
             "Eres un experto en modelado de datos analíticos y puedes combinar "
             "diferentes tablas según las relaciones definidas en los metadatos."
+            "Utiliza la tool 'metadata_tool' para consultar los metadatos "
         ),
         allow_delegation=False,
         verbose=True,
