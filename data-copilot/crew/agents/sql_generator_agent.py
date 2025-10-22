@@ -25,7 +25,7 @@ def create_sql_generator_agent(
             "diferentes tablas según las relaciones definidas en los metadatos."
         ),
         allow_delegation=False,
-        verbose=False,
+        verbose=True,
         tools=[metadata_tool],
         llm=llm,
     )

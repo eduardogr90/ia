@@ -64,7 +64,7 @@ def create_analyzer_agent(
             " y estructuras los datos en una tabla o matriz con posibles subniveles cuando aplica."
         ),
         allow_delegation=False,
-        verbose=False,
+        verbose=True,
         tools=[analysis_tool],
         llm=llm,
     )
