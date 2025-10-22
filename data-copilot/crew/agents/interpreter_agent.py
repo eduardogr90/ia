@@ -30,7 +30,7 @@ def create_interpreter_agent(
             " o una matriz de resultados, sin prometer narrativas adicionales."
         ),
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         tools=[history_tool] if history_tool else [],
         llm=llm,
     )

@@ -220,7 +220,7 @@ def create_validator_agent(
             "ejecuten."
         ),
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         tools=[validation_tool],
         llm=llm,
     )

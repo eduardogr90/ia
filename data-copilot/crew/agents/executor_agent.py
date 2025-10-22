@@ -73,7 +73,7 @@ def create_executor_agent(
             "presentan. El análisis narrativo será realizado por otro agente."
         ),
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         tools=[query_tool],
         llm=llm,
     )
