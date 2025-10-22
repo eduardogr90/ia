@@ -102,7 +102,7 @@ class BaseCrewOrchestrator:
                 detail=str(exc),
             ) from exc
         try:
-            self._llm = init_gemini_llm(
+            llm = init_gemini_llm(
                 credentials_obj,
                 location=location,
             )
@@ -117,7 +117,15 @@ class BaseCrewOrchestrator:
                 "No se pudo inicializar el modelo Gemini.",
                 detail=str(exc),
             ) from exc
-        self.interpreter_agent = create_interpreter_agent(llm=self._llm)
+        if llm is None:
+            raise OrchestrationError(
+                "La inicialización del modelo Gemini devolvió un valor vacío.",
+                detail="init_gemini_llm regresó None",
+            )
+        self._llm = llm
+        self.interpreter_agent = create_interpreter_agent(
+            self.history_tool, llm=self._llm
+        )
         self.sql_agent = create_sql_generator_agent(self.metadata_tool, llm=self._llm)
         self.executor_agent = create_executor_agent(self.bigquery_tool, llm=self._llm)
         self.validation_tool.set_llm(self._llm)
