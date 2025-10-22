@@ -125,5 +125,14 @@
     "valid": true,
     "issues": [],
     "warnings": []
+  },
+  {
+    "timestamp": "2025-10-22T20:40:45.378020+00:00",
+    "question": "What is the total number of sales for each project and service this month?",
+    "submitted_sql": "SELECT\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    COALESCE(acc_producto_servicio, 'Total') AS service,\n    SUM(1) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    GROUPING SETS ((acc_proyecto_venta, acc_producto_servicio), (acc_proyecto_venta), (acc_producto_servicio), ())\nORDER BY\n    project, service;",
+    "sanitized_sql": "SELECT\n    COALESCE(acc_proyecto_venta, 'Total') AS project,\n    COALESCE(acc_producto_servicio, 'Total') AS service,\n    SUM(1) AS total_sales\nFROM\n    `accom-dw.accom_ventas.tb_result_energia`\nWHERE\n    EXTRACT(YEAR FROM acc_fecha_venta) = EXTRACT(YEAR FROM CURRENT_DATE())\n    AND EXTRACT(MONTH FROM acc_fecha_venta) = EXTRACT(MONTH FROM CURRENT_DATE())\nGROUP BY\n    GROUPING SETS ((acc_proyecto_venta, acc_producto_servicio), (acc_proyecto_venta), (acc_producto_servicio), ())\nORDER BY\n    project, service",
+    "valid": true,
+    "issues": [],
+    "warnings": []
   }
 ]
