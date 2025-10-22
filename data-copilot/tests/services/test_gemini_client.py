@@ -18,6 +18,16 @@ class _DummyLLM:
         return prompt
 
 
+class _FrozenLLM(_DummyLLM):
+    """LLM stub that forbids setting new attributes, similar to Pydantic models."""
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_frozen", True)
+
+    def __setattr__(self, name: str, value: object) -> None:  # pragma: no cover - behavior under test
+        raise ValueError(f"Cannot set attribute {name}")
+
+
 def test_ensure_crewai_llm_adds_supports_stop_words_when_missing() -> None:
     llm = _DummyLLM()
 
@@ -44,3 +54,14 @@ def test_ensure_crewai_llm_preserves_existing_method() -> None:
     assert result is llm
     assert llm.supports_stop_words.__func__ is original_method.__func__
     assert llm.supports_stop_words() is True
+
+
+def test_ensure_crewai_llm_wraps_when_attribute_assignment_forbidden() -> None:
+    llm = _FrozenLLM()
+
+    result = _ensure_crewai_llm_compatibility(llm)
+
+    assert result is not llm
+    assert hasattr(result, "supports_stop_words")
+    assert result.supports_stop_words() is False
+    assert result.invoke("hola") == "hola"
