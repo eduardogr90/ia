@@ -171,18 +171,50 @@ def _ensure_crewai_llm_compatibility(llm: Any) -> Any:
     if llm is None:
         return None
 
-    if not hasattr(llm, "supports_stop_words"):
-        # ``CrewAgentExecutor`` introduced a call to ``supports_stop_words``
-        # during initialization.  ``langchain``'s ``VertexAI`` client does not
-        # implement that helper, so we provide a benign default that simply
-        # signals stop words are unsupported.  ``MethodType`` binds ``self``
-        # correctly so the lambda behaves as an instance method.
-        llm.supports_stop_words = types.MethodType(  # type: ignore[attr-defined]
-            lambda self: False,
-            llm,
-        )
+    if hasattr(llm, "supports_stop_words"):
+        return llm
 
-    return llm
+    # ``CrewAgentExecutor`` introduced a call to ``supports_stop_words``
+    # during initialization.  ``langchain``'s ``VertexAI`` client does not
+    # implement that helper, so we provide a benign default that simply
+    # signals stop words are unsupported.  ``MethodType`` binds ``self``
+    # correctly so the lambda behaves as an instance method.
+    bound_method = types.MethodType(  # type: ignore[attr-defined]
+        lambda self: False,
+        llm,
+    )
+
+    try:
+        setattr(llm, "supports_stop_words", bound_method)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    else:
+        return llm
+
+    class _CrewCompatibleLLM:
+        """Lightweight proxy exposing ``supports_stop_words`` for CrewAI."""
+
+        __slots__ = ("_wrapped",)
+
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+
+        def supports_stop_words(self) -> bool:
+            return False
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._wrapped, name)
+
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - passthrough
+            return self._wrapped(*args, **kwargs)
+
+        def __repr__(self) -> str:  # pragma: no cover - debug helper
+            return repr(self._wrapped)
+
+        def __str__(self) -> str:  # pragma: no cover - debug helper
+            return str(self._wrapped)
+
+    return _CrewCompatibleLLM(llm)
 
 
 def init_gemini_llm(
