@@ -31,84 +31,24 @@ class SQLMetadataTool(BaseTool):
 
         if not self.metadata:
             return "No hay metadatos disponibles."
-
-        def _format_description(value: object) -> str:
-            if isinstance(value, list):
-                return "\n".join(
-                    line.strip()
-                    for line in value
-                    if isinstance(line, str) and line.strip()
-                )
-            if value is None:
-                return ""
-            return str(value).strip()
-
-        def _format_synonyms(value: object) -> str:
-            if isinstance(value, (list, tuple, set)):
-                cleaned = [str(item).strip() for item in value if str(item).strip()]
-                return ", ".join(cleaned)
-            if value is None:
-                return ""
-            text = str(value).strip()
-            return text
-
         sections = []
         for table, table_data in self.metadata.items():
-            if not isinstance(table_data, dict):
-                continue
-            description = (
-                table_data.get("description")
-                or table_data.get("descripcion")
-            )
-            description_text = _format_description(description)
-
-            columns_obj = (
-                table_data.get("columns")
-                or table_data.get("columnas")
-                or {}
-            )
-
+            description = table_data.get("description", "")
+            columns = table_data.get("columns", [])
             column_lines = []
-            if isinstance(columns_obj, dict):
-                for col_name, col_info in columns_obj.items():
-                    column_desc = ""
-                    column_type = ""
-                    column_synonyms = ""
-                    if isinstance(col_info, dict):
-                        column_desc = _format_description(
-                            col_info.get("description")
-                            or col_info.get("descripcion")
-                        )
-                        column_type = str(
-                            col_info.get("type") or col_info.get("tipo_dato") or ""
-                        ).strip()
-                        column_synonyms = _format_synonyms(
-                            col_info.get("synonyms")
-                            or col_info.get("sinonimos")
-                        )
-                    else:
-                        column_desc = _format_description(col_info)
-
-                    details = []
-                    if column_desc:
-                        details.append(column_desc)
-                    if column_type:
-                        details.append(f"Tipo: {column_type}")
-                    if column_synonyms:
-                        details.append(f"Sinónimos: {column_synonyms}")
-
-                    if details:
-                        column_lines.append(f"- {col_name}: " + " | ".join(details))
-                    else:
-                        column_lines.append(f"- {col_name}")
-
-            section_lines = [f"Tabla: {table}"]
-            if description_text:
-                section_lines.append(f"Descripción: {description_text}")
+            for column in columns:
+                col_name = column.get("name")
+                col_desc = column.get("description", "")
+                if col_desc:
+                    column_lines.append(f"- {col_name}: {col_desc}")
+                else:
+                    column_lines.append(f"- {col_name}")
+            section = [f"Tabla: {table}"]
+            if description:
+                section.append(f"Descripción: {description}")
             if column_lines:
-                section_lines.append("Columnas:\n" + "\n".join(column_lines))
-            sections.append("\n".join(section_lines))
-
+                section.append("Columnas:\n" + "\n".join(column_lines))
+            sections.append("\n".join(section))
         return "\n\n".join(sections)
 
     def _run(self, table: str | None = None) -> str:

@@ -87,7 +87,6 @@ def _run_task(
         agents=[agent],
         tasks=[task],
         process=Process.sequential,
-        verbose=False,
     )
     start_time = perf_counter()
     try:
