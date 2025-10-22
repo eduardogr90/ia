@@ -6,4 +6,3 @@ google-cloud-bigquery
 langchain-google-vertexai
 vertexai
 sqlglot>=23.0.0
-annotated-types>=0.6.0
