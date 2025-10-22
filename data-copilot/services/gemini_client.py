@@ -275,10 +275,13 @@ class GeminiClient:
         rows = results or []
         serialized_rows = json.dumps(rows, ensure_ascii=False, indent=2)
         prompt_parts = [
-            "Analiza los siguientes resultados de una consulta SQL y redacta un resumen ejecutivo en español.",
-            "Incluye tendencias, comparaciones relevantes y una breve interpretación de los datos.",
-            "Responde estrictamente en formato JSON con las claves: \"text\" y \"chart\".",
-            "La clave chart debe contener labels y values si corresponde; si no aplica, usa null.",
+            "Analiza los siguientes resultados de una consulta SQL y produce una salida estrictamente tabular en español.",
+            "Debes responder exclusivamente en formato JSON con las claves: \"qualifier_line\" y \"table_markdown\".",
+            "qualifier_line debe ser una sola línea que indique si la respuesta corresponde a un único valor concreto o a múltiples resultados (por ejemplo: \"Único valor concreto.\" o \"Múltiples resultados; los resultados se muestran a continuación.\").",
+            "table_markdown debe contener únicamente una tabla o matriz en Markdown con los datos relevantes, sin texto adicional.",
+            "Si solo hay un registro o un valor, crea una tabla mínima que muestre claramente ese valor.",
+            "Si no hay resultados, table_markdown debe ser una tabla con un encabezado descriptivo y una fila que indique \"Sin resultados\" y qualifier_line debe mencionar que no hay datos disponibles.",
+            "Utiliza subniveles combinando encabezados (por ejemplo Nivel>Subnivel) cuando necesites representar jerarquías, pero evita comentarios fuera de la tabla.",
         ]
         if question:
             prompt_parts.append(f"Pregunta original del usuario: {question}")
@@ -288,17 +291,17 @@ class GeminiClient:
         prompt_parts.append("Resultados obtenidos (formato JSON):")
         prompt_parts.append(serialized_rows)
         prompt_parts.append(
-            "Recuerda devolver un JSON válido. Ejemplo: {\"text\": \"...\", \"chart\": {\"labels\": [], \"values\": []}}"
+            "Recuerda devolver un JSON válido. Ejemplo: {\"qualifier_line\": \"Múltiples resultados; los resultados se muestran a continuación.\", \"table_markdown\": \"| Columna | Valor |\\n|---|---|\\n| A | 1 |\"}"
         )
         prompt = "\n\n".join(prompt_parts)
 
         try:
             response = self._llm.invoke(prompt)
         except Exception as exc:  # pragma: no cover - depende del entorno
-            LOGGER.exception("Error al solicitar análisis narrativo a Gemini: %s", exc)
+            LOGGER.exception("Error al solicitar análisis tabular a Gemini: %s", exc)
             return {
-                "text": "No fue posible generar el análisis con Gemini.",
-                "chart": None,
+                "qualifier_line": "Error al generar tabla; se muestra mensaje informativo.",
+                "table_markdown": "| Detalle | Valor |\\n|---|---|\\n| Error | No fue posible generar el análisis con Gemini. |",
                 "error": str(exc),
             }
 
@@ -320,20 +323,21 @@ class GeminiClient:
                     payload = None
 
         if not isinstance(payload, dict):
-            return {"text": raw_text.strip(), "chart": None}
+            cleaned = raw_text.strip()
+            return {"qualifier_line": cleaned, "table_markdown": ""}
 
-        text = payload.get("text")
-        chart = payload.get("chart")
-        if not isinstance(text, str):
-            text = str(text) if text is not None else ""
-        if isinstance(chart, dict):
-            labels = chart.get("labels")
-            values = chart.get("values")
-            if not isinstance(labels, list) or not isinstance(values, list):
-                chart = None
-        else:
-            chart = None
-        return {"text": text.strip(), "chart": chart}
+        qualifier_line = payload.get("qualifier_line")
+        table_markdown = payload.get("table_markdown")
+
+        if not isinstance(qualifier_line, str):
+            qualifier_line = str(qualifier_line) if qualifier_line is not None else ""
+        if not isinstance(table_markdown, str):
+            table_markdown = str(table_markdown) if table_markdown is not None else ""
+
+        return {
+            "qualifier_line": qualifier_line.strip(),
+            "table_markdown": table_markdown.strip(),
+        }
 
 
 __all__ = [

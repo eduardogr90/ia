@@ -304,7 +304,7 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 analyzer_task = Task(
                     description=analyzer_prompt,
                     agent=self.analyzer_agent,
-                    expected_output="JSON con text y chart",
+                    expected_output="JSON con qualifier_line y table_markdown",
                 )
                 analyzer_raw, analyzer_trace = _run_task(
                     self.analyzer_agent,
@@ -315,15 +315,26 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 )
                 analyzer_output = _parse_json(analyzer_raw)
                 append_trace(analyzer_trace)
-                response_text = analyzer_output.get("text")
-                if not isinstance(response_text, str) or not response_text.strip():
-                    response_text = str(analyzer_raw).strip()
-                chart = (
-                    analyzer_output.get("chart")
+                qualifier_line = (
+                    analyzer_output.get("qualifier_line")
                     if isinstance(analyzer_output, dict)
                     else None
                 )
-                chart_payload = chart if isinstance(chart, dict) else None
+                table_markdown = (
+                    analyzer_output.get("table_markdown")
+                    if isinstance(analyzer_output, dict)
+                    else None
+                )
+                if not isinstance(qualifier_line, str) or not qualifier_line.strip():
+                    qualifier_line = str(analyzer_raw).strip()
+                if not isinstance(table_markdown, str):
+                    table_markdown = ""
+                final_response_parts = [qualifier_line.strip()]
+                table_markdown = table_markdown.strip()
+                if table_markdown:
+                    final_response_parts.append("")
+                    final_response_parts.append(table_markdown)
+                response_text = "\n".join(part for part in final_response_parts if part)
                 return finalize_result(
                     response=response_text.strip(),
                     interpreter_output=interpreter_data,
@@ -335,18 +346,23 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                     sql=sanitized_sql,
                     rows=rows,
                     error=None,
-                    chart=chart_payload,
+                    chart=None,
                 )
 
             # Caso en que no se requiere SQL: responder con el razonamiento del intérprete.
-            fallback_text = (
+            fallback_detail = (
                 interpreter_data.get("reasoning")
                 if isinstance(interpreter_data, dict)
                 else None
             ) or "La pregunta no requiere ejecutar SQL."
-            analyzer_output = {"text": str(fallback_text), "chart": None}
+            qualifier_line = "Sin resultados; se muestra información contextual."
+            table_markdown = "| Detalle | Valor |\n|---|---|\n| Nota | " + str(fallback_detail).strip().replace("\n", " ") + " |"
+            analyzer_output = {
+                "qualifier_line": qualifier_line,
+                "table_markdown": table_markdown,
+            }
             return finalize_result(
-                response=str(fallback_text).strip(),
+                response=f"{qualifier_line}\n\n{table_markdown}",
                 interpreter_output=interpreter_data,
                 sql_output=sql_data,
                 validation_output=validation_data,

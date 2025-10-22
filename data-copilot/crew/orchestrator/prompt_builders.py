@@ -156,11 +156,12 @@ def _build_analyzer_prompt(
 ) -> str:
     """Build the prompt that guides the Gemini-powered analysis agent."""
     base = [
-        "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
-        "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
-        "Si solo hay un valor disponible, limita la respuesta a una frase directa y concreta.",
-        "Sé preciso, conciso y basa tus conclusiones únicamente en los resultados mostrados.",
-        "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo.",
+        "Analiza los resultados devueltos por BigQuery y responde en español siguiendo un formato rígido.",
+        "La respuesta final debe contener únicamente:",
+        "1) Una línea que indique si el resultado es un único valor concreto o múltiples valores (ejemplo: \"Único valor concreto.\" o \"Múltiples resultados; los resultados se muestran a continuación.\").",
+        "2) Una tabla o matriz en Markdown con los datos relevantes, sin texto adicional, notas ni explicaciones.",
+        "No redactes conclusiones narrativas ni comentarios fuera de la tabla.",
+        "Debes usar el tool `gemini_result_analyzer` para construir la tabla.",
     ]
     is_comparative = coerce_bool(semantics.get("is_comparative"))
     aggregated_period = (
@@ -182,25 +183,25 @@ def _build_analyzer_prompt(
 
     if is_comparative:
         base.append(
-            "La solicitud es comparativa o evolutiva; responde siguiendo esa estructura y evita agregar desgloses extra."
+            "La solicitud es comparativa o evolutiva; refleja la comparación directamente en la tabla sin añadir desgloses extra."
         )
     elif aggregated_period:
         period_label = aggregated_label or "principal"
         breakdown_unit_label = breakdown_unit or "secundario"
         base.append(
             "Presenta el total "
-            f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit_label}."
+            f"{period_label} en la primera fila o columna de la tabla y utiliza el desglose {breakdown_unit_label} en subniveles claramente identificados."
         )
     base.append(
-        "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
+        "Cuando existan varios registros, organiza encabezados y subencabezados para que la tabla refleje todos los niveles sin texto adicional."
     )
     if wants_visual:
         base.append(
-            "El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
+            "Si el usuario pidió visualización, limita la respuesta a la tabla en Markdown; no incluyas sugerencias de gráficos."
         )
     else:
         base.append(
-            "El usuario no pidió gráficos; mantén chart en null y no propongas visualizaciones."
+            "El usuario no pidió gráficos; la salida debe ser solo tabla en Markdown."
         )
     if sql:
         base.append("Consulta SQL ejecutada:")
@@ -209,7 +210,7 @@ def _build_analyzer_prompt(
         f"Cantidad de filas disponibles: {len(rows) if rows else 0}. Usa el tool para obtener la respuesta final."
     )
     base.append(
-        "El resultado final debe ser JSON con las claves text y chart (esta última puede ser null)."
+        "El resultado final debe ser JSON con las claves qualifier_line (string de una sola línea) y table_markdown (tabla en Markdown sin texto adicional)."
     )
     base.append(f"Pregunta a resolver: {refined_question}")
     return "\n\n".join(base)

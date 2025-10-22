@@ -14,8 +14,10 @@ class GeminiAnalysisTool(BaseTool):
 
     name: str = "gemini_result_analyzer"
     description: str = (
-        "Genera un análisis narrativo en español a partir de los resultados devueltos por BigQuery,"
-        " priorizando una respuesta directa y sin proponer visualizaciones salvo solicitud explícita."
+        "Convierte los resultados tabulares de BigQuery en una salida estrictamente estructurada:"
+        " una única línea que indique si se trata de un valor único o de múltiples valores y,"
+        " a continuación, una tabla o matriz en Markdown que contenga únicamente los datos relevantes."
+        " No debe añadir comentarios, conclusiones ni descripciones adicionales."
     )
     client: "GeminiClient"
     question: str = Field(default="")
@@ -51,14 +53,15 @@ def create_analyzer_agent(
     return Agent(
         role="AnalyzerAgent",
         goal=(
-            "Interpretar los resultados numéricos provenientes de BigQuery y "
-            "comunicar hallazgos en español en un lenguaje ejecutivo, empezando por la respuesta"
-            " puntual solicitada y aportando contexto mínimo adicional."
+            "Interpretar los resultados numéricos de BigQuery y devolverlos sin narrativa,"
+            " limitando la respuesta a una sola línea indicativa (valor único vs. múltiples resultados)"
+            " seguida exclusivamente por una tabla o matriz en Markdown con los datos solicitados."
         ),
         backstory=(
-            "Eres un analista de inteligencia de negocio que sintetiza datos en historias claras"
-            " para la dirección. Priorizas contestar la métrica central antes de agregar contexto"
-            " y solo mencionas visualizaciones cuando el usuario lo pide explícitamente."
+            "Eres un analista obsesionado con la consistencia tabular."
+            " No elaboras conclusiones ni explicaciones:"
+            " únicamente clasificas si la respuesta corresponde a un valor único o a múltiples valores"
+            " y estructuras los datos en una tabla o matriz con posibles subniveles cuando aplica."
         ),
         allow_delegation=False,
         verbose=True,
