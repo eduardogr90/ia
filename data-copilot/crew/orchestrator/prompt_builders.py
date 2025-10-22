@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from .semantics import coerce_bool
-
 
 def _build_interpreter_prompt(
     user_message: str, history_text: str, has_history: bool
@@ -15,14 +13,15 @@ def _build_interpreter_prompt(
     ]
     if has_history:
         base.append(
-            "Utiliza el historial proporcionado solo cuando aporte contexto relevante y no hagas suposiciones ajenas a él."
+            "Utiliza el historial proporcionado utilizando el tool para tomar la decision"
         )
         base.append("Historial:")
         base.append(history_text)
     else:
         base.append(
-            "Trabaja únicamente con el mensaje actual; no menciones ni supongas mensajes anteriores."
+            "Trabaja únicamente con el mensaje actual; No utilices la tool ya que el historial esta vacio"
         )
+
     base.append("")
     base.append(f"Mensaje actual: {user_message}")
     base.append("")
@@ -30,9 +29,7 @@ def _build_interpreter_prompt(
     base.append("- requires_sql: true o false")
     base.append("- reasoning: explicación corta")
     base.append("- refined_question: reformulación clara de la solicitud")
-    base.append(
-        "- semantics: objeto con is_comparative (bool), wants_visual (bool), aggregated_period (string o null), aggregated_label (string o null) y breakdown_unit (string o null)"
-    )
+
     return "\n".join(base)
 
 
@@ -40,7 +37,6 @@ def _build_sql_prompt(
     refined_question: str,
     metadata_summary: str,
     interpreter_data: Dict[str, object],
-    semantics: Dict[str, object],
 ) -> str:
     """Create the instruction block used by the SQL generator agent."""
     base = [
@@ -54,52 +50,22 @@ def _build_sql_prompt(
         "",
     ]
 
-    is_comparative = coerce_bool(semantics.get("is_comparative"))
-    aggregated_period = (
-        semantics.get("aggregated_period")
-        if isinstance(semantics.get("aggregated_period"), str)
-        else None
-    )
-    aggregated_label = (
-        semantics.get("aggregated_label")
-        if isinstance(semantics.get("aggregated_label"), str)
-        else None
-    )
-    breakdown_unit = (
-        semantics.get("breakdown_unit")
-        if isinstance(semantics.get("breakdown_unit"), str)
-        else None
-    )
-
-    if is_comparative:
-        base.append(
-            "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario y no añadas desgloses adicionales."
-        )
-    elif aggregated_period:
-        period_label = aggregated_label or "solicitado"
-        breakdown_unit_label = breakdown_unit or "más pequeño"
-        base.append(
-            "La solicitud pide un agregado "
-            f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit_label} "
-            "del mismo periodo solo con fines analíticos."
-        )
-        base.append(
-            "Puedes usar CTEs, UNION ALL o GROUPING SETS para entregar ambos niveles en un mismo resultado, identificando cada fila con una columna que indique el nivel de agregación (por ejemplo, nivel_agregacion)."
-        )
-        base.append(
-            "No alteres la métrica original ni cambies los filtros solicitados. Si el desglose adicional no es viable con los metadatos disponibles, indícalo con claridad en analysis."
-        )
-    else:
-        base.append(
-            "Respeta la granularidad mencionada por el usuario y evita añadir niveles temporales no pedidos."
-        )
-
     base.append("")
     base.append("Responde en JSON con las claves:")
     base.append("- sql: cadena con la consulta o null si no es necesaria")
     base.append(
-        "- analysis: explicación breve de la estrategia e indica cualquier decisión sobre granularidad"
+        "- sql_explicacion: Explica la consulta con detalle, con agregaciones, filtros etc si los hay. No menciones directamente el nombre literal de la columna en metadata"
     )
+    base.append(
+        "- semantics: objeto con las siguientes claves, completa con el nombre usado en el esquema obtenido con el select:"
+    )
+    base.append(
+        " - aggregated_periods ([str|null]): periodos principales ('año', 'mes', 'semana', 'día')."
+    )
+    base.append(
+        " - aggregated_labels ([str|null]): lista de categorías de agrupación, si aplica."
+    )
+
     return "\n".join(base)
 
 
@@ -151,67 +117,40 @@ def _build_validator_prompt(
 def _build_analyzer_prompt(
     refined_question: str,
     sql: str | None,
+    sql_explicacion: str | None,
     rows: List[Dict[str, object]] | None,
     semantics: Dict[str, object],
 ) -> str:
-    """Build the prompt that guides the Gemini-powered analysis agent."""
+    """Build the prompt that guides the Gemini-powered analysis agent with automatic chart selection."""
     base = [
         "Analiza los resultados devueltos por BigQuery y responde en español claro a la pregunta.",
-        "Responde primero a la métrica o total solicitado exactamente como lo pidió el usuario.",
-        "Si solo hay un valor disponible, limita la respuesta a una frase directa y concreta.",
-        "Sé preciso, conciso y basa tus conclusiones únicamente en los resultados mostrados.",
-        "Debes usar el tool `gemini_result_analyzer` para generar el resumen narrativo.",
+        "La respuesta debe tener como máximo dos frases, precisas y basadas exclusivamente en los resultados.",
+        "Utiliza el tool `gemini_result_analyzer` para generar el resumen narrativo.",
+        "El resultado final debe ser JSON con las claves `text` y `chart` (esta última puede ser null).",
     ]
-    is_comparative = coerce_bool(semantics.get("is_comparative"))
-    aggregated_period = (
-        semantics.get("aggregated_period")
-        if isinstance(semantics.get("aggregated_period"), str)
-        else None
-    )
-    aggregated_label = (
-        semantics.get("aggregated_label")
-        if isinstance(semantics.get("aggregated_label"), str)
-        else None
-    )
-    breakdown_unit = (
-        semantics.get("breakdown_unit")
-        if isinstance(semantics.get("breakdown_unit"), str)
-        else None
-    )
-    wants_visual = coerce_bool(semantics.get("wants_visual"))
 
-    if is_comparative:
+    aggregated_period = semantics.get("aggregated_periods", []) or []
+    aggregated_labels = semantics.get("aggregated_labels", []) or []
+
+    if aggregated_period:
         base.append(
-            "La solicitud es comparativa o evolutiva; responde siguiendo esa estructura y evita agregar desgloses extra."
+            "Si hay periodos agregados en los resultados, asegúrate de mencionar el principal antes que cualquier desglose."
         )
-    elif aggregated_period:
-        period_label = aggregated_label or "principal"
-        breakdown_unit_label = breakdown_unit or "secundario"
+    if aggregated_labels:
         base.append(
-            "Presenta el total "
-            f"{period_label} primero y, de forma opcional y breve, comenta hallazgos relevantes del desglose {breakdown_unit_label}."
+            "Cuando existan categorías de agrupación relevantes, destácalas solo si aportan a la respuesta."
         )
-    base.append(
-        "Cuando existan varios registros, asume que la interfaz mostrará una tabla con los totales relevantes; no describas columnas irrelevantes."
-    )
-    if wants_visual:
-        base.append(
-            "El usuario solicitó una visualización. Puedes sugerirla brevemente solo si los datos lo justifican; de lo contrario, mantén chart en null."
-        )
-    else:
-        base.append(
-            "El usuario no pidió gráficos; mantén chart en null y no propongas visualizaciones."
-        )
+
     if sql:
         base.append("Consulta SQL ejecutada:")
         base.append(f"```sql\n{sql}\n```")
-    base.append(
-        f"Cantidad de filas disponibles: {len(rows) if rows else 0}. Usa el tool para obtener la respuesta final."
-    )
-    base.append(
-        "El resultado final debe ser JSON con las claves text y chart (esta última puede ser null)."
-    )
+
     base.append(f"Pregunta a resolver: {refined_question}")
+    if sql_explicacion:
+        base.append(f"Incluye la explicación de la consulta: {sql_explicacion}")
+    else:
+        base.append("No se proporcionó explicación de la consulta; responde solo con base en los resultados.")
+
     return "\n\n".join(base)
 
 
