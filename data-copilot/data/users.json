@@ -4,5 +4,8 @@
   },
   "bob": {
     "password": "bob123"
+  },
+  "edu": {
+    "password": "edu123"
   }
 }

@@ -1,0 +1,17 @@
+{
+  "id": "2025_10_22_23_57_59",
+  "title": "cuantas ventas hemos hecho este mes por proyecto y servicio?",
+  "created_at": "2025-10-22T21:57:59.202770+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "cuantas ventas hemos hecho este mes por proyecto y servicio?",
+      "timestamp": "2025-10-22T21:58:07.455606+00:00"
+    },
+    {
+      "role": "assistant",
+      "content": "AttributeError: 'NoneType' object has no attribute 'supports_stop_words'",
+      "timestamp": "2025-10-22T21:58:08.178015+00:00"
+    }
+  ]
+}

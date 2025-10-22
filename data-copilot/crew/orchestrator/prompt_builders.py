@@ -46,6 +46,7 @@ def _build_sql_prompt(
     base = [
         "Genera una consulta SQL siguiendo el BigQuery Standard SQL que responda la pregunta.",
         "Utiliza solo tablas y columnas disponibles en los metadatos y respeta todos los filtros implícitos en la solicitud.",
+        "Utiliza el path completo de las tablas que vienen en los metadatos `accom-dw.accom_ventas.tb_result_energia`"
         f"Pregunta refinada: {refined_question}",
         f"Contexto adicional: {interpreter_data.get('reasoning', '')}",
         "",
@@ -54,49 +55,11 @@ def _build_sql_prompt(
         "",
     ]
 
-    is_comparative = coerce_bool(semantics.get("is_comparative"))
-    aggregated_period = (
-        semantics.get("aggregated_period")
-        if isinstance(semantics.get("aggregated_period"), str)
-        else None
-    )
-    aggregated_label = (
-        semantics.get("aggregated_label")
-        if isinstance(semantics.get("aggregated_label"), str)
-        else None
-    )
-    breakdown_unit = (
-        semantics.get("breakdown_unit")
-        if isinstance(semantics.get("breakdown_unit"), str)
-        else None
-    )
-
-    if is_comparative:
-        base.append(
-            "La pregunta es comparativa o evolutiva. Mantén exactamente la granularidad indicada por el usuario y no añadas desgloses adicionales."
-        )
-    elif aggregated_period:
-        period_label = aggregated_label or "solicitado"
-        breakdown_unit_label = breakdown_unit or "más pequeño"
-        base.append(
-            "La solicitud pide un agregado "
-            f"{period_label}. Además del total requerido, incorpora en la consulta un desglose {breakdown_unit_label} "
-            "del mismo periodo solo con fines analíticos."
-        )
-        base.append(
-            "Puedes usar CTEs, UNION ALL o GROUPING SETS para entregar ambos niveles en un mismo resultado, identificando cada fila con una columna que indique el nivel de agregación (por ejemplo, nivel_agregacion)."
-        )
-        base.append(
-            "No alteres la métrica original ni cambies los filtros solicitados. Si el desglose adicional no es viable con los metadatos disponibles, indícalo con claridad en analysis."
-        )
-    else:
-        base.append(
-            "Respeta la granularidad mencionada por el usuario y evita añadir niveles temporales no pedidos."
-        )
+   
 
     base.append("")
     base.append("Responde en JSON con las claves:")
-    base.append("- sql: cadena con la consulta o null si no es necesaria")
+    base.append("- sql: string sql puro de la consulta en texto plano, o null si no es necesaria")
     base.append(
         "- analysis: explicación breve de la estrategia e indica cualquier decisión sobre granularidad"
     )
@@ -139,8 +102,9 @@ def _build_validator_prompt(
 ) -> str:
     """Prepare the validation prompt that guards SQL safety."""
     return (
-        "Evalúa la sentencia SQL propuesta antes de su ejecución. Debes usar el tool"
-        " `sql_validation_tool` para verificar que sea segura.\n"
+        "Evalúa la sentencia SQL propuesta antes de su ejecución. "
+        "SQL siguiendo el BigQuery Standard SQL"
+        "Debes usar el tool `sql_validation_tool` para verificar que sea segura.\n"
         f"Consulta propuesta:\n```sql\n{sql}\n```\n"
         f"Pregunta del usuario: {refined_question}\n"
         "Responde exclusivamente en JSON con las claves: valid (bool), message,"
