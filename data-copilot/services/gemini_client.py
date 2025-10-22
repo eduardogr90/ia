@@ -12,6 +12,8 @@ from typing import Any, Dict, Mapping, MutableMapping, Optional
 from google.oauth2 import service_account
 from langchain_google_vertexai import VertexAI
 
+from crewai.llms.base_llm import BaseLLM
+
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_VERTEX_LOCATION = "us-central1"
@@ -165,56 +167,106 @@ def load_vertex_credentials(
     return _build_credentials_from_info(credentials_info)
 
 
+class _CrewCompatibleVertexLLM(BaseLLM):
+    """Adapter that exposes ``VertexAI`` instances as CrewAI compatible LLMs."""
+
+    __slots__ = ("_wrapped",)
+
+    def __init__(self, wrapped: Any) -> None:
+        model_name = (
+            getattr(wrapped, "model_name", None)
+            or getattr(wrapped, "model", None)
+            or wrapped.__class__.__name__
+        )
+        temperature = getattr(wrapped, "temperature", None)
+        provider = getattr(wrapped, "provider", "vertex_ai")
+        extra_params = {}
+        max_output_tokens = getattr(wrapped, "max_output_tokens", None)
+        if max_output_tokens is not None:
+            extra_params["max_output_tokens"] = max_output_tokens
+        top_p = getattr(wrapped, "top_p", None)
+        if top_p is not None:
+            extra_params["top_p"] = top_p
+        top_k = getattr(wrapped, "top_k", None)
+        if top_k is not None:
+            extra_params["top_k"] = top_k
+        super().__init__(
+            model=str(model_name),
+            temperature=temperature,
+            provider=str(provider),
+            **extra_params,
+        )
+        self._wrapped = wrapped
+
+    def supports_stop_words(self) -> bool:
+        handler = getattr(self._wrapped, "supports_stop_words", None)
+        if callable(handler):
+            try:
+                return bool(handler())
+            except Exception:  # pragma: no cover - best effort passthrough
+                return False
+        return False
+
+    def call(
+        self,
+        messages: str | list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        callbacks: list[Any] | None = None,
+        available_functions: dict[str, Any] | None = None,
+        from_task: Any | None = None,
+        from_agent: Any | None = None,
+    ) -> str:
+        """Proxy CrewAI ``call`` requests to the underlying ``VertexAI`` client."""
+
+        if isinstance(messages, str):
+            prompt = messages
+        else:
+            formatted = self._format_messages(messages)
+            prompt = "\n".join(
+                f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in formatted
+            )
+
+        try:
+            response = self._wrapped.invoke(prompt)
+        except Exception as exc:  # pragma: no cover - dependent on Vertex AI runtime
+            raise RuntimeError("Vertex AI invocation failed") from exc
+
+        if hasattr(response, "text"):
+            return str(response.text)
+        if hasattr(response, "content"):
+            return str(response.content)
+        return str(response)
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - passthrough
+        return self._wrapped.invoke(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:  # pragma: no cover - passthrough
+        return getattr(self._wrapped, name)
+
+
 def _ensure_crewai_llm_compatibility(llm: Any) -> Any:
-    """Ensure the returned LLM exposes the attributes CrewAI expects."""
+    """Ensure the returned LLM plays nicely with CrewAI's expectations."""
 
     if llm is None:
         return None
 
-    if hasattr(llm, "supports_stop_words"):
+    if isinstance(llm, (BaseLLM, _CrewCompatibleVertexLLM)):
         return llm
 
-    # ``CrewAgentExecutor`` introduced a call to ``supports_stop_words``
-    # during initialization.  ``langchain``'s ``VertexAI`` client does not
-    # implement that helper, so we provide a benign default that simply
-    # signals stop words are unsupported.  ``MethodType`` binds ``self``
-    # correctly so the lambda behaves as an instance method.
-    bound_method = types.MethodType(  # type: ignore[attr-defined]
-        lambda self: False,
-        llm,
-    )
+    if isinstance(llm, VertexAI):
+        return _CrewCompatibleVertexLLM(llm)
 
-    try:
-        setattr(llm, "supports_stop_words", bound_method)
-    except (AttributeError, TypeError, ValueError):
-        pass
-    else:
-        return llm
+    if not hasattr(llm, "supports_stop_words"):
+        try:
+            bound_method = types.MethodType(  # type: ignore[attr-defined]
+                lambda self: False,
+                llm,
+            )
+            setattr(llm, "supports_stop_words", bound_method)
+        except (AttributeError, TypeError, ValueError):
+            return _CrewCompatibleVertexLLM(llm)
 
-    class _CrewCompatibleLLM:
-        """Lightweight proxy exposing ``supports_stop_words`` for CrewAI."""
-
-        __slots__ = ("_wrapped",)
-
-        def __init__(self, wrapped: Any) -> None:
-            self._wrapped = wrapped
-
-        def supports_stop_words(self) -> bool:
-            return False
-
-        def __getattr__(self, name: str) -> Any:
-            return getattr(self._wrapped, name)
-
-        def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - passthrough
-            return self._wrapped(*args, **kwargs)
-
-        def __repr__(self) -> str:  # pragma: no cover - debug helper
-            return repr(self._wrapped)
-
-        def __str__(self) -> str:  # pragma: no cover - debug helper
-            return str(self._wrapped)
-
-    return _CrewCompatibleLLM(llm)
+    return llm
 
 
 def init_gemini_llm(
