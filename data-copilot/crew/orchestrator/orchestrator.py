@@ -17,7 +17,7 @@ from .prompt_builders import (
 )
 from .results import OrchestrationError, OrchestrationResult
 from .runner import _parse_json, _run_task
-from .semantics import extract_semantics
+from .semantics import analyze_question_semantics, extract_semantics
 from services.bigquery_client import BigQueryClient
 
 
@@ -137,7 +137,7 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 description=interpreter_prompt,
                 agent=self.interpreter_agent,
                 expected_output=(
-                    "JSON con requires_sql, reasoning, refined_question y semantics"
+                    "JSON con requires_sql, reasoning y refined_question"
                 ),
             )
             interpreter_raw, interpreter_trace = _run_task(
@@ -153,9 +153,30 @@ class CrewOrchestrator(BaseCrewOrchestrator):
             requires_sql = bool(interpreter_data.get("requires_sql", False))
             refined_question = interpreter_data.get("refined_question") or user_message
 
-            question_semantics = extract_semantics(interpreter_data)
+            base_semantics = analyze_question_semantics(refined_question)
+            interpreter_semantics = extract_semantics(interpreter_data)
+            question_semantics: Dict[str, object] = dict(base_semantics)
+            explicit_semantic_keys = set()
+            raw_semantics = interpreter_data.get("semantics")
+            if isinstance(raw_semantics, dict):
+                explicit_semantic_keys.update(raw_semantics.keys())
+            for key in (
+                "is_comparative",
+                "aggregated_period",
+                "aggregated_label",
+                "breakdown_unit",
+                "wants_visual",
+            ):
+                if key in interpreter_data:
+                    explicit_semantic_keys.add(key)
+            for key in explicit_semantic_keys:
+                question_semantics[key] = interpreter_semantics.get(key)
 
-            sql_data: Dict[str, object] = {"sql": None, "analysis": ""}
+            sql_data: Dict[str, object] = {
+                "sql": None,
+                "sql_explicacion": None,
+                "semantics": {},
+            }
             validation_data: Dict[str, object] = {}
             analyzer_output: Dict[str, object] = {}
             if requires_sql:
@@ -164,12 +185,11 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                     refined_question,
                     metadata_summary,
                     interpreter_data,
-                    question_semantics,
                 )
                 sql_task = Task(
                     description=sql_prompt,
                     agent=self.sql_agent,
-                    expected_output="JSON con sql y analysis",
+                    expected_output="JSON con sql, sql_explicacion y semantics",
                 )
                 sql_raw, sql_trace = _run_task(
                     self.sql_agent,
@@ -290,6 +310,46 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                         chart=None,
                     )
 
+                sql_explanation = (
+                    sql_data.get("sql_explicacion")
+                    if isinstance(sql_data, dict)
+                    else None
+                )
+                if isinstance(sql_explanation, str) and not sql_explanation.strip():
+                    sql_explanation = None
+                raw_sql_semantics = (
+                    sql_data.get("semantics") if isinstance(sql_data, dict) else None
+                )
+                sql_semantics = (
+                    raw_sql_semantics if isinstance(raw_sql_semantics, dict) else {}
+                )
+                analyzer_semantics: Dict[str, object] = dict(question_semantics)
+                if sql_semantics:
+                    analyzer_semantics.update(sql_semantics)
+                aggregated_periods = analyzer_semantics.get("aggregated_periods")
+                if isinstance(aggregated_periods, list):
+                    analyzer_semantics["aggregated_periods"] = aggregated_periods
+                elif isinstance(aggregated_periods, str) and aggregated_periods.strip():
+                    analyzer_semantics["aggregated_periods"] = [aggregated_periods.strip()]
+                else:
+                    period = analyzer_semantics.get("aggregated_period")
+                    if isinstance(period, str) and period.strip():
+                        analyzer_semantics["aggregated_periods"] = [period.strip()]
+                    else:
+                        analyzer_semantics["aggregated_periods"] = []
+
+                aggregated_labels = analyzer_semantics.get("aggregated_labels")
+                if isinstance(aggregated_labels, list):
+                    analyzer_semantics["aggregated_labels"] = aggregated_labels
+                elif isinstance(aggregated_labels, str) and aggregated_labels.strip():
+                    analyzer_semantics["aggregated_labels"] = [aggregated_labels.strip()]
+                else:
+                    label = analyzer_semantics.get("aggregated_label")
+                    if isinstance(label, str) and label.strip():
+                        analyzer_semantics["aggregated_labels"] = [label.strip()]
+                    else:
+                        analyzer_semantics["aggregated_labels"] = []
+
                 self.analysis_tool.set_context(
                     question=refined_question,
                     sql=sanitized_sql,
@@ -298,8 +358,9 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 analyzer_prompt = build_analyzer_prompt(
                     refined_question,
                     sanitized_sql,
+                    sql_explanation,
                     rows or [],
-                    question_semantics,
+                    analyzer_semantics,
                 )
                 analyzer_task = Task(
                     description=analyzer_prompt,
