@@ -1,119 +1,131 @@
-# IA Data Copilot
+# IA Data Copilot — Flow Orchestration Suite
 
-Aplicación web en Flask que actúa como copiloto de análisis de datos. El sistema
-coordina varios agentes de CrewAI para interpretar preguntas en lenguaje
-natural, generar SQL sobre BigQuery, ejecutar las consultas de forma segura y
-redactar el análisis final con Gemini (Vertex AI). Las conversaciones y metadatos
-se almacenan en disco mediante ficheros JSON.
+This repository now bundles a **Flask backend** and a **React + React Flow frontend** for designing and validating orchestration graphs. The system keeps the original CrewAI agents and data copilot features while exposing a dedicated workflow builder that can export validated YAML definitions and JPG previews.
 
-## Arquitectura
+![Projects overview](docs/images/projects-page.svg)
+
+## Architecture
 
 ```
-data-copilot/
-├── app.py                 # Entrypoint Flask y rutas HTTP
-├── config/                # Configuración y utilidades de entorno
-├── crew/                  # Orquestador y agentes de CrewAI
-├── data/                  # Metadatos del modelo y conversaciones de ejemplo
-├── services/              # Clientes externos (BigQuery, Gemini, almacenamiento JSON)
-├── static/ y templates/   # Recursos front-end
-└── requirements.txt       # Dependencias específicas del proyecto
+.
+├── backend/              # Flask API, storage layer, validation + YAML export
+│   ├── api/              # REST blueprints for projects, flows, validation, export
+│   ├── core/             # Domain models, validation routines, storage helpers
+│   ├── storage/          # JSON persistence (projects + flows)
+│   └── tests/            # Pytest suite covering validation and YAML output
+├── data-copilot/         # Legacy CrewAI orchestration stack
+├── frontend/             # Vite + React + TypeScript editor
+│   ├── components/       # Flow canvas, inspector, modal dialogs
+│   ├── lib/              # API wrappers, schema types, Zustand store
+│   └── pages/            # Projects, flows, and editor routes
+└── docs/                 # Reference documentation and illustrated guides
 ```
 
-### Flujo principal de los agentes
+Key backend modules:
 
-1. **Interpreter Agent**: decide si se necesita SQL y detecta la semántica de la
-   pregunta.
-2. **SQL Generator Agent**: crea la consulta apoyándose en los metadatos del
-   dataset.
-3. **Validator Agent**: analiza la consulta y aplica reglas de seguridad
-   determinísticas.
-4. **Executor Agent**: ejecuta la consulta en BigQuery con un límite de filas
-   controlado.
-5. **Analyzer Agent**: resume los resultados y genera insights narrativos con
-   Gemini, incluyendo recomendaciones de visualización cuando aplica.
+- `backend/core/validation.py` builds inbound/outbound edge maps, enforces unique IDs, detects unknown references, cycles, dangling labels, and enumerates all root → terminal message paths (with a configurable max depth safeguard).
+- `backend/core/yaml_export.py` converts a `FlowModel` into a deterministic, human-friendly YAML document using `ruamel.yaml` with ordered keys and preserved metadata.
+- `backend/tests/` contains regression coverage for validation edge cases (cycles, orphan edges, label mismatches) and YAML serialization snapshots.
 
-## Requisitos previos
+Key frontend modules:
 
-- Python 3.11+
-- Cuenta de servicio con permisos en BigQuery y Vertex AI
-- Credenciales locales en formato JSON (ver siguiente sección)
+- `frontend/src/pages/EditorPage.tsx` wires the Zustand store, React Flow canvas, inspector sidebars, validation modal, and export actions (YAML + JPG).
+- `frontend/src/components/HeaderBar.tsx` exposes toolbar commands with a **Fit to content** toggle that tightens the viewport before generating JPG exports.
+- `frontend/src/lib/yamlPreview.ts` renders a client-side YAML preview that mirrors the backend exporter structure for instant feedback.
 
-Para instalar dependencias:
+![Editor overview](docs/images/editor-overview.svg)
+
+## Installation
+
+### Backend (Python 3.11+)
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r data-copilot/requirements.txt
+pip install -r backend/requirements.txt
+pip install -r data-copilot/requirements.txt  # CrewAI stack
 ```
 
-## Configuración de credenciales
-
-La aplicación necesita credenciales de Google Cloud para BigQuery y Vertex AI.
-Sigue estos pasos antes de ejecutar cualquier comando que interactúe con los
-servicios:
-
-### BigQuery
-
-1. Descarga el JSON del service account con permisos de BigQuery.
-2. Guarda el archivo en `data-copilot/config/bq_service_account.json`. También
-   puedes establecer la variable de entorno `BIGQUERY_CREDENTIALS_PATH` con la
-   ruta o `BIGQUERY_CREDENTIALS_JSON` con el contenido completo del JSON.
-
-### Vertex AI (Gemini)
-
-1. Obtén el JSON del service account con permisos de Vertex AI y guárdalo en
-   `data-copilot/config/json_key_vertex.json` (puedes usar el archivo de ejemplo
-   `json_key_vertex.sample.json` como plantilla) o define
-   `GOOGLE_APPLICATION_CREDENTIALS` con la ruta o el contenido del JSON.
-2. El orquestador obtiene automáticamente el `project_id` del JSON. Solo define
-   la variable de entorno `VERTEX_PROJECT_ID` si quieres sobrescribirlo.
-3. (Opcional) Define `VERTEX_LOCATION` si quieres usar una región distinta a
-   `us-central1`.
-
-Puedes exportar las variables en tu terminal antes de ejecutar la aplicación:
+### Frontend (Node 18+)
 
 ```bash
-export VERTEX_PROJECT_ID="tu-proyecto"           # Opcional si el JSON ya lo incluye
-export VERTEX_LOCATION="us-central1"             # Opcional
+cd frontend
+npm install
 ```
 
-Si usas un archivo `.env`, asegúrate de que incluya las mismas variables en caso
-de que quieras sobreescribir la configuración derivada del JSON.
+> **Note:** If your npm registry enforces SSO, configure the registry URL first (`npm config set registry <url>`). All dependencies are MIT-compatible.
 
-## Ejecución de la aplicación
+## Running locally
+
+### Backend
 
 ```bash
-cd data-copilot
-export FLASK_APP=app.py
-flask run --reload
+# Activate your virtualenv first
+export FLASK_APP=backend/app.py
+export FLASK_ENV=development
+python -m flask run --app backend.app --port 5000
 ```
 
-Abre `http://127.0.0.1:5000/` y autentícate con las credenciales definidas en
-`data-copilot/data/users.json`. Cada conversación nueva se almacena en
-`data-copilot/data/conversations/<usuario>/<id>.json`.
+The API will serve under `http://127.0.0.1:5000/api` with CORS enabled for the default Vite origin.
 
-## Pruebas y herramientas de calidad
-
-El proyecto no incluye una suite de pruebas automatizadas, pero se recomiendan
-los siguientes comandos para auditorías rápidas:
+### Frontend
 
 ```bash
-# Analizar imports y código no utilizado
-python -m vulture data-copilot
-
-# Formatear y ordenar imports
-black data-copilot
-isort data-copilot
-
-# Generar documentación HTML con pdoc
-pdoc --html data-copilot --output-dir docs
+cd frontend
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-## Soporte y mantenimiento
+The editor reads the backend base URL from `VITE_API_BASE_URL` (default `http://localhost:5000/api`).
 
-- Actualiza las credenciales cuando cambie algún secreto o cuenta de servicio.
-- Revisa `data-copilot/crew/orchestrator.py` para ajustar reglas de orquestación
-  o costes por token.
-- Los metadatos que alimentan a los agentes residen en `data-copilot/data/model`;
-  cualquier cambio de esquema debe reflejarse allí.
+## Docker workflows
+
+Both layers ship individual Dockerfiles for streamlined container builds:
+
+```bash
+# Backend
+cd backend
+docker build -t copilot-backend .
+docker run --rm -p 5000:5000 -v $(pwd)/storage:/app/storage copilot-backend
+
+# Frontend
+cd frontend
+docker build -t copilot-frontend .
+docker run --rm -p 5173:5173 copilot-frontend
+```
+
+Mounting `backend/storage` is optional but recommended to persist project JSON files.
+
+## Testing
+
+```bash
+# Backend validation + YAML exporter
+pytest backend/tests
+
+# Type checks & build smoke test
+cd frontend
+npm run lint
+npm run build
+```
+
+![Validation modal](docs/images/validation-modal.svg)
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| **Ctrl/Cmd + S** | Save current flow (runs quick client-side validation first) |
+| **Ctrl/Cmd + E** | Trigger full backend validation and open the results modal |
+| **Ctrl/Cmd + J** | Export YAML via the backend exporter |
+| **Ctrl/Cmd + P** | Export JPG (optionally fitting the viewport to graph content) |
+| **Ctrl/Cmd + N** | Create a new flow from the Projects page |
+
+Additional canvas gestures: pan with mouse drag, zoom with wheel, snap-to-grid on drag, auto-layout via toolbar.
+
+## Known limitations
+
+- The sample `backend/storage/projects.json` seeds a minimal catalogue; provide your own fixture or production storage path for real deployments.
+- html2canvas runs fully client-side. For very large graphs you may need to increase browser memory or export in segments.
+- BigQuery and Vertex AI credentials remain required for the original CrewAI orchestration pipeline; consult `data-copilot/README.md` for detailed setup.
+
+For a detailed REST API and schema specification consult [`API.md`](API.md) and [`SCHEMA.md`](SCHEMA.md).
