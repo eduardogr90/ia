@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import types
 from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
@@ -164,6 +165,26 @@ def load_vertex_credentials(
     return _build_credentials_from_info(credentials_info)
 
 
+def _ensure_crewai_llm_compatibility(llm: Any) -> Any:
+    """Ensure the returned LLM exposes the attributes CrewAI expects."""
+
+    if llm is None:
+        return None
+
+    if not hasattr(llm, "supports_stop_words"):
+        # ``CrewAgentExecutor`` introduced a call to ``supports_stop_words``
+        # during initialization.  ``langchain``'s ``VertexAI`` client does not
+        # implement that helper, so we provide a benign default that simply
+        # signals stop words are unsupported.  ``MethodType`` binds ``self``
+        # correctly so the lambda behaves as an instance method.
+        llm.supports_stop_words = types.MethodType(  # type: ignore[attr-defined]
+            lambda self: False,
+            llm,
+        )
+
+    return llm
+
+
 def init_gemini_llm(
     credentials: (
         service_account.Credentials
@@ -249,7 +270,7 @@ def init_gemini_llm(
             f"No se pudo inicializar el modelo Gemini de Vertex AI: {exc}"
         ) from exc
 
-    return llm
+    return _ensure_crewai_llm_compatibility(llm)
 
 
 class GeminiClient:
