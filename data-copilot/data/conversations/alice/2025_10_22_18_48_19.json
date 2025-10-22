@@ -1,0 +1,17 @@
+{
+  "id": "2025_10_22_18_48_19",
+  "title": "cuantas ventas hemos hecho este mes por proyecto y servicio?",
+  "created_at": "2025-10-22T16:48:19.777317+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "cuantas ventas hemos hecho este mes por proyecto y servicio?",
+      "timestamp": "2025-10-22T16:48:27.118193+00:00"
+    },
+    {
+      "role": "assistant",
+      "content": "No se encontró el archivo de credenciales de BigQuery en config/bq_service_account.json.: No se encontraron credenciales de BigQuery. Define BIGQUERY_CREDENTIALS_JSON, BIGQUERY_CREDENTIALS_PATH o coloca el archivo en config/bq_service_account.json.",
+      "timestamp": "2025-10-22T16:48:27.131706+00:00"
+    }
+  ]
+}
