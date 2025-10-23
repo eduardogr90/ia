@@ -1,7 +1,9 @@
 """Main Crew orchestrator coordinating the multi-agent workflow."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, List, Optional
 
 from crewai import Task
@@ -21,6 +23,14 @@ from .semantics import extract_semantics
 from services.bigquery_client import BigQueryClient
 
 
+def _normalize_sql(sql: str | None) -> str:
+    """Normalize whitespace in SQL statements for safe comparisons."""
+
+    if not sql:
+        return ""
+    return " ".join(str(sql).split()).lower()
+
+
 class CrewOrchestrator(BaseCrewOrchestrator):
     """Coordinates the CrewAI agents to respond to user questions."""
 
@@ -32,6 +42,42 @@ class CrewOrchestrator(BaseCrewOrchestrator):
         super().__init__(metadata_dir=metadata_dir, bigquery_client=bigquery_client)
 
     # ------------------------------------------------------------------
+    def _check_executor_sql_execution(self, expected_sql: str) -> tuple[bool, Optional[str]]:
+        """Ensure the executor agent ran the validated SQL statement."""
+
+        executed_sql = self.bigquery_tool.last_sql
+        if not executed_sql:
+            return (
+                False,
+                "El agente ejecutor no ejecutó la consulta validada en BigQuery. "
+                "Se canceló la respuesta para evitar datos inventados.",
+            )
+
+        if _normalize_sql(executed_sql) != _normalize_sql(expected_sql):
+            return (
+                False,
+                "El agente ejecutor ejecutó una consulta distinta a la validada y "
+                "se descartaron los resultados para evitar datos incorrectos.",
+            )
+
+        return True, None
+
+    def _execute_validated_sql(
+        self, sql: str
+    ) -> tuple[Optional[List[Dict[str, object]]], Optional[str]]:
+        """Run *sql* directly using the trusted BigQuery client."""
+
+        try:
+            rows = self.bigquery_client.run_query(sql)
+        except Exception as exc:  # pragma: no cover - depends on BigQuery
+            self.bigquery_tool.last_error = str(exc)
+            return None, str(exc)
+
+        self.bigquery_tool.last_result = rows
+        self.bigquery_tool.last_error = None
+        self.bigquery_tool.last_sql = sql
+        return rows, None
+
     def handle_message(
         self, user_message: str, history: List[Dict[str, str]]
     ) -> OrchestrationResult:
@@ -270,10 +316,57 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 )
                 rows = self.bigquery_tool.last_result
                 execution_error = self.bigquery_tool.last_error
+                guard_ok, guard_message = self._check_executor_sql_execution(
+                    sanitized_sql
+                )
                 executor_trace["rows_returned"] = len(rows or [])
+                if not guard_ok and guard_message:
+                    executor_trace["warning"] = guard_message
+                    if self.bigquery_tool.last_sql:
+                        executor_trace["executed_sql"] = self.bigquery_tool.last_sql
                 if execution_error:
                     executor_trace["error"] = execution_error
                 append_trace(executor_trace)
+
+                if not guard_ok:
+                    fallback_start = perf_counter()
+                    fallback_rows, fallback_error = self._execute_validated_sql(
+                        sanitized_sql
+                    )
+                    fallback_latency = (perf_counter() - fallback_start) * 1000.0
+                    fallback_trace = {
+                        "agent": "BigQueryFallback",
+                        "prompt_sent": sanitized_sql,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "latency_ms": round(fallback_latency, 3),
+                        "tokens": {"prompt": 0, "completion": 0, "total": 0},
+                        "llm_response": "",
+                        "rows_returned": len(fallback_rows or []),
+                    }
+                    if guard_message:
+                        fallback_trace["reason"] = guard_message
+                    if fallback_error:
+                        fallback_trace["error"] = fallback_error
+                    append_trace(fallback_trace)
+                    if fallback_error:
+                        error_message = "No se pudo ejecutar la consulta validada automáticamente."
+                        if guard_message:
+                            error_message = f"{guard_message} {error_message}"
+                        error_message = f"{error_message} Detalle: {fallback_error}"
+                        return finalize_result(
+                            response=error_message,
+                            interpreter_output=interpreter_data,
+                            sql_output=sql_data,
+                            validation_output=validation_data,
+                            analyzer_output={},
+                            sql=sanitized_sql,
+                            rows=None,
+                            error=fallback_error,
+                            chart=None,
+                        )
+                    rows = fallback_rows
+                    execution_error = None
+
                 if execution_error:
                     error_message = (
                         f"Error al ejecutar la consulta en BigQuery: {execution_error}"
