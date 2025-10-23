@@ -1,7 +1,9 @@
 """Main Crew orchestrator coordinating the multi-agent workflow."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, List, Optional
 
 from crewai import Task
@@ -319,6 +321,46 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 if execution_error:
                     executor_trace["error"] = execution_error
                 append_trace(executor_trace)
+
+                if not guard_ok:
+                    fallback_start = perf_counter()
+                    fallback_rows, fallback_error = self._execute_validated_sql(
+                        sanitized_sql
+                    )
+                    fallback_latency = (perf_counter() - fallback_start) * 1000.0
+                    fallback_trace = {
+                        "agent": "BigQueryFallback",
+                        "prompt_sent": sanitized_sql,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "latency_ms": round(fallback_latency, 3),
+                        "tokens": {"prompt": 0, "completion": 0, "total": 0},
+                        "llm_response": "",
+                        "rows_returned": len(fallback_rows or []),
+                    }
+                    if guard_message:
+                        fallback_trace["reason"] = guard_message
+                    if fallback_error:
+                        fallback_trace["error"] = fallback_error
+                    append_trace(fallback_trace)
+                    if fallback_error:
+                        error_message = "No se pudo ejecutar la consulta validada automáticamente."
+                        if guard_message:
+                            error_message = f"{guard_message} {error_message}"
+                        error_message = f"{error_message} Detalle: {fallback_error}"
+                        return finalize_result(
+                            response=error_message,
+                            interpreter_output=interpreter_data,
+                            sql_output=sql_data,
+                            validation_output=validation_data,
+                            analyzer_output={},
+                            sql=sanitized_sql,
+                            rows=None,
+                            error=fallback_error,
+                            chart=None,
+                        )
+                    rows = fallback_rows
+                    execution_error = None
+
                 if execution_error:
                     error_message = (
                         f"Error al ejecutar la consulta en BigQuery: {execution_error}"
