@@ -42,41 +42,23 @@ class CrewOrchestrator(BaseCrewOrchestrator):
         super().__init__(metadata_dir=metadata_dir, bigquery_client=bigquery_client)
 
     # ------------------------------------------------------------------
-    def _check_executor_sql_execution(self, expected_sql: str) -> tuple[bool, Optional[str]]:
+    def _check_executor_sql_execution(self, expected_sql: str) -> Optional[str]:
         """Ensure the executor agent ran the validated SQL statement."""
 
         executed_sql = self.bigquery_tool.last_sql
         if not executed_sql:
             return (
-                False,
                 "El agente ejecutor no ejecutó la consulta validada en BigQuery. "
-                "Se canceló la respuesta para evitar datos inventados.",
+                "Se canceló la respuesta para evitar datos inventados."
             )
 
         if _normalize_sql(executed_sql) != _normalize_sql(expected_sql):
             return (
-                False,
                 "El agente ejecutor ejecutó una consulta distinta a la validada y "
-                "se descartaron los resultados para evitar datos incorrectos.",
+                "se descartaron los resultados para evitar datos incorrectos."
             )
 
-        return True, None
-
-    def _execute_validated_sql(
-        self, sql: str
-    ) -> tuple[Optional[List[Dict[str, object]]], Optional[str]]:
-        """Run *sql* directly using the trusted BigQuery client."""
-
-        try:
-            rows = self.bigquery_client.run_query(sql)
-        except Exception as exc:  # pragma: no cover - depends on BigQuery
-            self.bigquery_tool.last_error = str(exc)
-            return None, str(exc)
-
-        self.bigquery_tool.last_result = rows
-        self.bigquery_tool.last_error = None
-        self.bigquery_tool.last_sql = sql
-        return rows, None
+        return None
 
     def handle_message(
         self, user_message: str, history: List[Dict[str, str]]
@@ -316,14 +298,26 @@ class CrewOrchestrator(BaseCrewOrchestrator):
                 )
                 rows = self.bigquery_tool.last_result
                 execution_error = self.bigquery_tool.last_error
-                guard_ok, guard_message = self._check_executor_sql_execution(
+                executor_guard_error = self._check_executor_sql_execution(
                     sanitized_sql
                 )
                 executor_trace["rows_returned"] = len(rows or [])
-                if not guard_ok and guard_message:
-                    executor_trace["warning"] = guard_message
+                if executor_guard_error:
+                    executor_trace["error"] = executor_guard_error
                     if self.bigquery_tool.last_sql:
                         executor_trace["executed_sql"] = self.bigquery_tool.last_sql
+                    append_trace(executor_trace)
+                    return finalize_result(
+                        response=executor_guard_error,
+                        interpreter_output=interpreter_data,
+                        sql_output=sql_data,
+                        validation_output=validation_data,
+                        analyzer_output={},
+                        sql=sanitized_sql,
+                        rows=None,
+                        error=executor_guard_error,
+                        chart=None,
+                    )
                 if execution_error:
                     executor_trace["error"] = execution_error
                 append_trace(executor_trace)
